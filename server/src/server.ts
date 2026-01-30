@@ -26,12 +26,24 @@ import {
   TextEdit,
   DocumentSymbol,
   SymbolKind,
+  InlayHint,
+  Position,
+  InlayHintKind,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
-import type { LSLConstant, LSLEvent, LSLFunction } from './lslTypes';
+import type {
+  LSLConstant,
+  LSLEvent,
+  LSLFunction,
+  LSLFunctionCall,
+} from './lslTypes';
 
-import { Position, TextDocument } from 'vscode-languageserver-textdocument';
-import scanDocument, { Variables } from './scanner';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import {
+  scanDocumentForVariables,
+  scanDocumentForFunctionCalls,
+  Variables,
+} from './scanner';
 import getQuoteRanges from './quoteRanges';
 import getCommentedOutSections from './comments';
 import getScopes from './scopes';
@@ -142,6 +154,72 @@ const findFunctionName = (
   return { funcName, parenFound, numberOfCommas };
 };
 
+const findFunctionCommaLocations = (
+  funcOpenParenPos: TextDocumentPositionParams
+): TextDocumentPositionParams[] => {
+  const document = documents.get(funcOpenParenPos.textDocument.uri);
+  const text = document?.getText();
+  if (!text) return [];
+  const lines = text.split('\n');
+  let lineNumber = funcOpenParenPos.position.line;
+  if (lineNumber >= lines.length) return [];
+  let line = lines[lineNumber];
+  const commaPositions: TextDocumentPositionParams[] = [
+    {
+      textDocument: funcOpenParenPos.textDocument,
+      position: funcOpenParenPos.position,
+    },
+  ];
+  const commentedOutSections = getCommentedOutSections(text);
+  const quoteRanges = getQuoteRanges(line);
+  let colNumber = funcOpenParenPos.position.character + 1;
+
+  const bracketMatch: string[] = [];
+  while (!'};'.includes(line[colNumber])) {
+    const char = line[colNumber++];
+    if (quoteRanges.isInRange(colNumber)) continue;
+    if (commentedOutSections.isInSection(lineNumber, colNumber)) continue;
+    switch (char) {
+      case '>':
+        if (bracketMatch[bracketMatch.length - 1] === '<') {
+          bracketMatch.pop();
+        }
+        break;
+      case ')':
+        if (bracketMatch[bracketMatch.length - 1] === '(') {
+          bracketMatch.pop();
+        }
+        break;
+      case ']':
+        if (bracketMatch[bracketMatch.length - 1] === '[') {
+          bracketMatch.pop();
+        }
+        break;
+      case '<':
+      case '(':
+      case '[':
+        bracketMatch.push(char);
+        break;
+      case ',':
+        if (bracketMatch.length === 0) {
+          commaPositions.push({
+            textDocument: funcOpenParenPos.textDocument,
+            position: { line: lineNumber, character: colNumber - 1 },
+          });
+        }
+        break;
+      default:
+        break;
+    }
+    if (colNumber >= line.length) {
+      if (lineNumber + 1 >= lines.length) return commaPositions;
+      line = lines[++lineNumber];
+      colNumber = 0;
+    }
+  }
+  return commaPositions;
+};
+
 const getWord = (document: string, position: Position): string | null => {
   const lines = document.split('\n');
   const line = lines[position.line];
@@ -201,7 +279,6 @@ connection.onInitialize((params: InitializeParams) => {
       textDocumentSync: TextDocumentSyncKind.Incremental,
       // Tell the client that this server supports code completion.
       completionProvider: {
-        resolveProvider: true,
         triggerCharacters: ['(', ',', ' '],
       },
       definitionProvider: true,
@@ -215,6 +292,11 @@ connection.onInitialize((params: InitializeParams) => {
         triggerCharacters: ['(', ','],
       },
       hoverProvider: true,
+      inlayHintProvider: true,
+      // TODO: See if this could be used later
+      // inlayHintProvider: {
+      //   resolveProvider: true,
+      // },
     },
   };
   if (hasWorkspaceFolderCapability) {
@@ -301,7 +383,9 @@ const allVariables: { [uri: string]: Variables } = {};
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent((change) => {
   getCommentedOutSections(change.document.getText());
-  allVariables[change.document.uri] = scanDocument(change.document.getText());
+  allVariables[change.document.uri] = scanDocumentForVariables(
+    change.document.getText()
+  );
 });
 
 connection.onDidChangeWatchedFiles((_change) => {
@@ -328,383 +412,394 @@ connection.onCompletion(
     const line = lines[params.position.line];
     if (!line) return [];
     const lastChar = line[params.position.character - 1];
-    const allScopes = getScopes(document.getText());
+    try {
+      const allScopes = getScopes(document.getText());
 
-    if (' (,'.includes(lastChar)) {
-      const functionNameInfo = findFunctionName(params);
-      if (!functionNameInfo) return [];
-      const { funcName, parenFound, numberOfCommas } = functionNameInfo;
-      if (
-        !allFunctionNames.includes(funcName) ||
-        !parenFound ||
-        !funcName ||
-        ['if', 'for', 'while'].includes(funcName)
-      )
-        return [];
+      if (' (,'.includes(lastChar)) {
+        const functionNameInfo = findFunctionName(params);
+        if (!functionNameInfo) return [];
+        const { funcName, parenFound, numberOfCommas } = functionNameInfo;
+        if (
+          !allFunctionNames.includes(funcName) ||
+          !parenFound ||
+          !funcName ||
+          ['if', 'for', 'while'].includes(funcName)
+        )
+          return [];
 
-      const currentFunction = allFunctions[funcName];
-      const { parameters } = currentFunction;
-      const currentParam = parameters[numberOfCommas];
-      if (!currentParam) return [];
-      const { type, subtype, name } = currentParam;
-      const smartCompletionItems: CompletionItem[] = [];
-      switch (subtype) {
-        case 'attach_point':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'ATTACH_HEAD',
-              'ATTACH_NOSE',
-              'ATTACH_MOUTH',
-              'ATTACH_FACE_TONGUE',
-              'ATTACH_CHIN',
-              'ATTACH_FACE_JAW',
-              'ATTACH_LEAR',
-              'ATTACH_REAR',
-              'ATTACH_FACE_LEAR',
-              'ATTACH_FACE_REAR',
-              'ATTACH_LEYE',
-              'ATTACH_REYE',
-              'ATTACH_FACE_LEYE',
-              'ATTACH_FACE_REYE',
-              'ATTACH_NECK',
-              'ATTACH_LSHOULDER',
-              'ATTACH_RSHOULDER',
-              'ATTACH_LUARM',
-              'ATTACH_RUARM',
-              'ATTACH_LLARM',
-              'ATTACH_RLARM',
-              'ATTACH_LHAND',
-              'ATTACH_RHAND',
-              'ATTACH_LHAND_RING1',
-              'ATTACH_RHAND_RING1',
-              'ATTACH_LWING',
-              'ATTACH_RWING',
-              'ATTACH_CHEST',
-              'ATTACH_LEFT_PEC',
-              'ATTACH_RIGHT_PEC',
-              'ATTACH_BELLY',
-              'ATTACH_BACK',
-              'ATTACH_TAIL_BASE',
-              'ATTACH_TAIL_TIP',
-              'ATTACH_AVATAR_CENTER',
-              'ATTACH_PELVIS',
-              'ATTACH_GROIN',
-              'ATTACH_LHIP',
-              'ATTACH_RHIP',
-              'ATTACH_LULEG',
-              'ATTACH_RULEG',
-              'ATTACH_RLLEG',
-              'ATTACH_LLLEG',
-              'ATTACH_LFOOT',
-              'ATTACH_RFOOT',
-              'ATTACH_HIND_LFOOT',
-              'ATTACH_HIND_RFOOT',
-              'ATTACH_HUD_CENTER_2',
-              'ATTACH_HUD_TOP_RIGHT',
-              'ATTACH_HUD_TOP_CENTER',
-              'ATTACH_HUD_TOP_LEFT',
-              'ATTACH_HUD_CENTER_1',
-              'ATTACH_HUD_BOTTOM_LEFT',
-              'ATTACH_HUD_BOTTOM',
-              'ATTACH_HUD_BOTTOM_RIGHT',
-            ])
-          );
-          break;
-        case 'boolean':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems(['TRUE', 'FALSE'])
-          );
-          break;
-        case 'chat':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems(['PUBLIC_CHANNEL', 'DEBUG_CHANNEL'])
-          );
-          break;
-        case 'click_action':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'CLICK_ACTION_NONE',
-              'CLICK_ACTION_TOUCH',
-              'CLICK_ACTION_SIT',
-              'CLICK_ACTION_BUY',
-              'CLICK_ACTION_PAY',
-              'CLICK_ACTION_OPEN',
-              'CLICK_ACTION_PLAY',
-              'CLICK_ACTION_OPEN_MEDIA',
-              'CLICK_ACTION_ZOOM',
-              'CLICK_ACTION_DISABLED',
-              'CLICK_ACTION_IGNORE',
-            ])
-          );
-          break;
-        case 'face':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems(['ALL_SIDES'])
-          );
-          break;
-        case 'link':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'LINK_ROOT',
-              'LINK_SET',
-              'LINK_ALL_OTHERS',
-              'LINK_ALL_CHILDREN',
-              'LINK_THIS',
-            ])
-          );
-          break;
-        case 'mask':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'MASK_BASE',
-              'MASK_OWNER',
-              'MASK_GROUP',
-              'MASK_EVERYONE',
-              'MASK_NEXT',
-            ])
-          );
-          break;
-        case 'pass':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'PASS_IF_NOT_HANDLED',
-              'PASS_ALWAYS',
-              'PASS_NEVER',
-            ])
-          );
-          break;
-        case 'perm':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'PERM_ALL',
-              'PERM_COPY',
-              'PERM_MODIFY',
-              'PERM_MOVE',
-              'PERM_TRANSFER',
-            ])
-          );
-          break;
-        case 'permission':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'PERMISSION_DEBIT',
-              'PERMISSION_TAKE_CONTROLS',
-              'PERMISSION_TRIGGER_ANIMATION',
-              'PERMISSION_ATTACH',
-              'PERMISSION_CHANGE_LINKS',
-              'PERMISSION_TRACK_CAMERA',
-              'PERMISSION_CONTROL_CAMERA',
-              'PERMISSION_TELEPORT',
-              'PERMISSION_SILENT_ESTATE_MANAGEMENT',
-              'PERMISSION_OVERRIDE_ANIMATIONS',
-              'PERMISSION_RETURN_OBJECTS',
-            ])
-          );
-          break;
-        case 'status':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'STATUS_PHYSICS',
-              'STATUS_ROTATE_X',
-              'STATUS_ROTATE_Y',
-              'STATUS_ROTATE_Z',
-              'STATUS_PHANTOM',
-              'STATUS_SANDBOX',
-              'STATUS_BLOCK_GRAB',
-              'STATUS_DIE_AT_EDGE',
-              'STATUS_RETURN_AT_EDGE',
-              'STATUS_CAST_SHADOWS',
-              'STATUS_BLOCK_GRAB_OBJECT',
-              'STATUS_DIE_AT_NO_ENTRY',
-            ])
-          );
-          break;
-        case 'texture_anim':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'ANIM_ON',
-              'LOOP',
-              'REVERSE',
-              'PING_PONG',
-              'SMOOTH',
-              'ROTATE',
-              'SCALE',
-            ])
-          );
-          break;
-        case 'vehicle_flag':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'VEHICLE_FLAG_CAMERA_DECOUPLED',
-              'VEHICLE_FLAG_HOVER_GLOBAL_HEIGHT',
-              'VEHICLE_FLAG_HOVER_TERRAIN_ONLY',
-              'VEHICLE_FLAG_HOVER_UP_ONLY',
-              'VEHICLE_FLAG_HOVER_WATER_ONLY',
-              'VEHICLE_FLAG_LIMIT_MOTOR_UP',
-              'VEHICLE_FLAG_LIMIT_ROLL_ONLY',
-              'VEHICLE_FLAG_MOUSELOOK_BANK',
-              'VEHICLE_FLAG_MOUSELOOK_STEER',
-              'VEHICLE_FLAG_NO_DEFLECTION_UP',
-            ])
-          );
-          break;
-        case 'vehicle_float':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'VEHICLE_ANGULAR_DEFLECTION_EFFICIENCY',
-              'VEHICLE_ANGULAR_DEFLECTION_TIMESCALE',
-              'VEHICLE_ANGULAR_MOTOR_DECAY_TIMESCALE',
-              'VEHICLE_ANGULAR_MOTOR_TIMESCALE',
-              'VEHICLE_BANKING_EFFICIENCY',
-              'VEHICLE_BANKING_MIX',
-              'VEHICLE_BANKING_TIMESCALE',
-              'VEHICLE_BUOYANCY',
-              'VEHICLE_HOVER_HEIGHT',
-              'VEHICLE_HOVER_EFFICIENCY',
-              'VEHICLE_HOVER_TIMESCALE',
-              'VEHICLE_LINEAR_DEFLECTION_EFFICIENCY',
-              'VEHICLE_LINEAR_DEFLECTION_TIMESCALE',
-              'VEHICLE_LINEAR_MOTOR_DECAY_TIMESCALE',
-              'VEHICLE_LINEAR_MOTOR_TIMESCALE',
-              'VEHICLE_VERTICAL_ATTRACTION_EFFICIENCY',
-              'VEHICLE_VERTICAL_ATTRACTION_TIMESCALE',
-            ])
-          );
-          break;
-        case 'vehicle_rotation':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems(['VEHICLE_REFERENCE_FRAME'])
-          );
-          break;
-        case 'vehicle_type':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'VEHICLE_TYPE_NONE',
-              'VEHICLE_TYPE_SLED',
-              'VEHICLE_TYPE_CAR',
-              'VEHICLE_TYPE_BOAT',
-              'VEHICLE_TYPE_AIRPLANE',
-              'VEHICLE_TYPE_BALLOON',
-            ])
-          );
-          break;
-        case 'vehicle_vector':
-          smartCompletionItems.push(
-            ...getConstantCompletionItems([
-              'VEHICLE_ANGULAR_FRICTION_TIMESCALE',
-              'VEHICLE_ANGULAR_MOTOR_DIRECTION',
-              'VEHICLE_LINEAR_FRICTION_TIMESCALE',
-              'VEHICLE_LINEAR_MOTOR_DIRECTION',
-              'VEHICLE_LINEAR_MOTOR_OFFSET',
-            ])
-          );
-          break;
-        default:
-      }
+        const currentFunction = allFunctions[funcName];
+        const { parameters } = currentFunction;
+        const currentParam = parameters[numberOfCommas];
+        if (!currentParam) return [];
+        const { type, subtype, name } = currentParam;
+        const smartCompletionItems: CompletionItem[] = [];
+        switch (subtype) {
+          case 'attach_point':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'ATTACH_HEAD',
+                'ATTACH_NOSE',
+                'ATTACH_MOUTH',
+                'ATTACH_FACE_TONGUE',
+                'ATTACH_CHIN',
+                'ATTACH_FACE_JAW',
+                'ATTACH_LEAR',
+                'ATTACH_REAR',
+                'ATTACH_FACE_LEAR',
+                'ATTACH_FACE_REAR',
+                'ATTACH_LEYE',
+                'ATTACH_REYE',
+                'ATTACH_FACE_LEYE',
+                'ATTACH_FACE_REYE',
+                'ATTACH_NECK',
+                'ATTACH_LSHOULDER',
+                'ATTACH_RSHOULDER',
+                'ATTACH_LUARM',
+                'ATTACH_RUARM',
+                'ATTACH_LLARM',
+                'ATTACH_RLARM',
+                'ATTACH_LHAND',
+                'ATTACH_RHAND',
+                'ATTACH_LHAND_RING1',
+                'ATTACH_RHAND_RING1',
+                'ATTACH_LWING',
+                'ATTACH_RWING',
+                'ATTACH_CHEST',
+                'ATTACH_LEFT_PEC',
+                'ATTACH_RIGHT_PEC',
+                'ATTACH_BELLY',
+                'ATTACH_BACK',
+                'ATTACH_TAIL_BASE',
+                'ATTACH_TAIL_TIP',
+                'ATTACH_AVATAR_CENTER',
+                'ATTACH_PELVIS',
+                'ATTACH_GROIN',
+                'ATTACH_LHIP',
+                'ATTACH_RHIP',
+                'ATTACH_LULEG',
+                'ATTACH_RULEG',
+                'ATTACH_RLLEG',
+                'ATTACH_LLLEG',
+                'ATTACH_LFOOT',
+                'ATTACH_RFOOT',
+                'ATTACH_HIND_LFOOT',
+                'ATTACH_HIND_RFOOT',
+                'ATTACH_HUD_CENTER_2',
+                'ATTACH_HUD_TOP_RIGHT',
+                'ATTACH_HUD_TOP_CENTER',
+                'ATTACH_HUD_TOP_LEFT',
+                'ATTACH_HUD_CENTER_1',
+                'ATTACH_HUD_BOTTOM_LEFT',
+                'ATTACH_HUD_BOTTOM',
+                'ATTACH_HUD_BOTTOM_RIGHT',
+              ])
+            );
+            break;
+          case 'boolean':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems(['TRUE', 'FALSE'])
+            );
+            break;
+          case 'chat':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems(['PUBLIC_CHANNEL', 'DEBUG_CHANNEL'])
+            );
+            break;
+          case 'click_action':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'CLICK_ACTION_NONE',
+                'CLICK_ACTION_TOUCH',
+                'CLICK_ACTION_SIT',
+                'CLICK_ACTION_BUY',
+                'CLICK_ACTION_PAY',
+                'CLICK_ACTION_OPEN',
+                'CLICK_ACTION_PLAY',
+                'CLICK_ACTION_OPEN_MEDIA',
+                'CLICK_ACTION_ZOOM',
+                'CLICK_ACTION_DISABLED',
+                'CLICK_ACTION_IGNORE',
+              ])
+            );
+            break;
+          case 'face':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems(['ALL_SIDES'])
+            );
+            break;
+          case 'link':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'LINK_ROOT',
+                'LINK_SET',
+                'LINK_ALL_OTHERS',
+                'LINK_ALL_CHILDREN',
+                'LINK_THIS',
+              ])
+            );
+            break;
+          case 'mask':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'MASK_BASE',
+                'MASK_OWNER',
+                'MASK_GROUP',
+                'MASK_EVERYONE',
+                'MASK_NEXT',
+              ])
+            );
+            break;
+          case 'pass':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'PASS_IF_NOT_HANDLED',
+                'PASS_ALWAYS',
+                'PASS_NEVER',
+              ])
+            );
+            break;
+          case 'perm':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'PERM_ALL',
+                'PERM_COPY',
+                'PERM_MODIFY',
+                'PERM_MOVE',
+                'PERM_TRANSFER',
+              ])
+            );
+            break;
+          case 'permission':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'PERMISSION_DEBIT',
+                'PERMISSION_TAKE_CONTROLS',
+                'PERMISSION_TRIGGER_ANIMATION',
+                'PERMISSION_ATTACH',
+                'PERMISSION_CHANGE_LINKS',
+                'PERMISSION_TRACK_CAMERA',
+                'PERMISSION_CONTROL_CAMERA',
+                'PERMISSION_TELEPORT',
+                'PERMISSION_SILENT_ESTATE_MANAGEMENT',
+                'PERMISSION_OVERRIDE_ANIMATIONS',
+                'PERMISSION_RETURN_OBJECTS',
+              ])
+            );
+            break;
+          case 'status':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'STATUS_PHYSICS',
+                'STATUS_ROTATE_X',
+                'STATUS_ROTATE_Y',
+                'STATUS_ROTATE_Z',
+                'STATUS_PHANTOM',
+                'STATUS_SANDBOX',
+                'STATUS_BLOCK_GRAB',
+                'STATUS_DIE_AT_EDGE',
+                'STATUS_RETURN_AT_EDGE',
+                'STATUS_CAST_SHADOWS',
+                'STATUS_BLOCK_GRAB_OBJECT',
+                'STATUS_DIE_AT_NO_ENTRY',
+              ])
+            );
+            break;
+          case 'texture_anim':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'ANIM_ON',
+                'LOOP',
+                'REVERSE',
+                'PING_PONG',
+                'SMOOTH',
+                'ROTATE',
+                'SCALE',
+              ])
+            );
+            break;
+          case 'vehicle_flag':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'VEHICLE_FLAG_CAMERA_DECOUPLED',
+                'VEHICLE_FLAG_HOVER_GLOBAL_HEIGHT',
+                'VEHICLE_FLAG_HOVER_TERRAIN_ONLY',
+                'VEHICLE_FLAG_HOVER_UP_ONLY',
+                'VEHICLE_FLAG_HOVER_WATER_ONLY',
+                'VEHICLE_FLAG_LIMIT_MOTOR_UP',
+                'VEHICLE_FLAG_LIMIT_ROLL_ONLY',
+                'VEHICLE_FLAG_MOUSELOOK_BANK',
+                'VEHICLE_FLAG_MOUSELOOK_STEER',
+                'VEHICLE_FLAG_NO_DEFLECTION_UP',
+              ])
+            );
+            break;
+          case 'vehicle_float':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'VEHICLE_ANGULAR_DEFLECTION_EFFICIENCY',
+                'VEHICLE_ANGULAR_DEFLECTION_TIMESCALE',
+                'VEHICLE_ANGULAR_MOTOR_DECAY_TIMESCALE',
+                'VEHICLE_ANGULAR_MOTOR_TIMESCALE',
+                'VEHICLE_BANKING_EFFICIENCY',
+                'VEHICLE_BANKING_MIX',
+                'VEHICLE_BANKING_TIMESCALE',
+                'VEHICLE_BUOYANCY',
+                'VEHICLE_HOVER_HEIGHT',
+                'VEHICLE_HOVER_EFFICIENCY',
+                'VEHICLE_HOVER_TIMESCALE',
+                'VEHICLE_LINEAR_DEFLECTION_EFFICIENCY',
+                'VEHICLE_LINEAR_DEFLECTION_TIMESCALE',
+                'VEHICLE_LINEAR_MOTOR_DECAY_TIMESCALE',
+                'VEHICLE_LINEAR_MOTOR_TIMESCALE',
+                'VEHICLE_VERTICAL_ATTRACTION_EFFICIENCY',
+                'VEHICLE_VERTICAL_ATTRACTION_TIMESCALE',
+              ])
+            );
+            break;
+          case 'vehicle_rotation':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems(['VEHICLE_REFERENCE_FRAME'])
+            );
+            break;
+          case 'vehicle_type':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'VEHICLE_TYPE_NONE',
+                'VEHICLE_TYPE_SLED',
+                'VEHICLE_TYPE_CAR',
+                'VEHICLE_TYPE_BOAT',
+                'VEHICLE_TYPE_AIRPLANE',
+                'VEHICLE_TYPE_BALLOON',
+              ])
+            );
+            break;
+          case 'vehicle_vector':
+            smartCompletionItems.push(
+              ...getConstantCompletionItems([
+                'VEHICLE_ANGULAR_FRICTION_TIMESCALE',
+                'VEHICLE_ANGULAR_MOTOR_DIRECTION',
+                'VEHICLE_LINEAR_FRICTION_TIMESCALE',
+                'VEHICLE_LINEAR_MOTOR_DIRECTION',
+                'VEHICLE_LINEAR_MOTOR_OFFSET',
+              ])
+            );
+            break;
+          default:
+        }
 
-      smartCompletionItems.push(
-        ...Object.values(allVariables[params.textDocument.uri])
-          .filter(
-            (variable) =>
-              allScopes.isInScope(params.position, {
-                line: variable.line,
-                character: variable.column,
-              }) &&
-              (variable.type === type ||
-                (['rotation', 'quarternion'].includes(variable.type) &&
-                  ['rotation', 'quarternion'].includes(type)))
-          )
-          .map((variable) => ({
-            label: variable.name,
-            kind: CompletionItemKind.Variable,
-            data: variable.name,
-            sortText: `${
-              (subtype &&
-                variable.name.toLowerCase().includes(subtype.toLowerCase())) ||
-              variable.name.toLowerCase().includes(name.toLowerCase())
-                ? '**'
-                : ''
-            }*${variable.name}`,
-          }))
-      );
+        smartCompletionItems.push(
+          ...Object.values(allVariables[params.textDocument.uri])
+            .filter(
+              (variable) =>
+                allScopes.isInScope(params.position, {
+                  line: variable.line,
+                  character: variable.column,
+                }) &&
+                (variable.type === type ||
+                  (['rotation', 'quarternion'].includes(variable.type) &&
+                    ['rotation', 'quarternion'].includes(type)))
+            )
+            .map((variable) => ({
+              label: variable.name,
+              kind: CompletionItemKind.Variable,
+              data: variable.name,
+              sortText: `${
+                (subtype &&
+                  variable.name
+                    .toLowerCase()
+                    .includes(subtype.toLowerCase())) ||
+                variable.name.toLowerCase().includes(name.toLowerCase())
+                  ? '**'
+                  : ''
+              }*${variable.name}`,
+            }))
+        );
 
-      smartCompletionItems.push(
-        ...Object.keys(allConstants)
-          .filter(
-            (name) =>
-              (allConstants[name].type === type ||
-                (['rotation', 'quarternion'].includes(
-                  allConstants[name].type
-                ) &&
-                  ['rotation', 'quarternion'].includes(type))) &&
-              !smartCompletionItems.find((existing) => existing.label === name)
-          )
-          .map<CompletionItem>((name) => ({
+        smartCompletionItems.push(
+          ...Object.keys(allConstants)
+            .filter(
+              (name) =>
+                (allConstants[name].type === type ||
+                  (['rotation', 'quarternion'].includes(
+                    allConstants[name].type
+                  ) &&
+                    ['rotation', 'quarternion'].includes(type))) &&
+                !smartCompletionItems.find(
+                  (existing) => existing.label === name
+                )
+            )
+            .map<CompletionItem>((name) => ({
+              label: name,
+              kind: CompletionItemKind.Constant,
+              data: name,
+              detail: `${allConstants[name].type} ${allConstants[name].name} = ${allConstants[name].value}`,
+              documentation: allConstants[name].meaning ?? undefined,
+            }))
+        );
+        return smartCompletionItems;
+      } else {
+        const functions = Object.keys(allFunctions).map<CompletionItem>(
+          (name) => {
+            const func = allFunctions[name];
+            const tags: CompletionItemTag[] = [];
+            if (func.deprecated) {
+              tags.push(CompletionItemTag.Deprecated);
+            }
+
+            let documentation = func.description || '';
+            if (func.returnType) {
+              if (documentation !== '') {
+                documentation += '\n\n';
+              }
+              documentation += `Returns a ${func.returnType} ${
+                func.returns ?? ''
+              }`;
+            }
+
+            return {
+              label: name,
+              kind: CompletionItemKind.Function,
+              data: name,
+              detail: `${
+                func.returnType ? `(${func.returnType}) ` : ''
+              }${name}(${func.parameters
+                .map((p) => `${p.type} ${p.name}`)
+                .join(', ')})`,
+              documentation,
+              tags,
+            };
+          }
+        );
+        const constants = Object.keys(allConstants).map<CompletionItem>(
+          (name) => ({
             label: name,
             kind: CompletionItemKind.Constant,
             data: name,
             detail: `${allConstants[name].type} ${allConstants[name].name} = ${allConstants[name].value}`,
             documentation: allConstants[name].meaning ?? undefined,
-          }))
-      );
-      return smartCompletionItems;
-    } else {
-      const functions = Object.keys(allFunctions).map<CompletionItem>(
-        (name) => {
-          const func = allFunctions[name];
-          const tags: CompletionItemTag[] = [];
-          if (func.deprecated) {
-            tags.push(CompletionItemTag.Deprecated);
-          }
-
-          let documentation = func.description || '';
-          if (func.returnType) {
-            if (documentation !== '') {
-              documentation += '\n\n';
-            }
-            documentation += `Returns a ${func.returnType} ${
-              func.returns ?? ''
-            }`;
-          }
-
-          return {
-            label: name,
-            kind: CompletionItemKind.Function,
-            data: name,
-            detail: `${
-              func.returnType ? `(${func.returnType}) ` : ''
-            }${name}(${func.parameters
-              .map((p) => `${p.type} ${p.name}`)
-              .join(', ')})`,
-            documentation,
-            tags,
-          };
-        }
-      );
-      const constants = Object.keys(allConstants).map<CompletionItem>(
-        (name) => ({
-          label: name,
-          kind: CompletionItemKind.Constant,
-          data: name,
-          detail: `${allConstants[name].type} ${allConstants[name].name} = ${allConstants[name].value}`,
-          documentation: allConstants[name].meaning ?? undefined,
-        })
-      );
-
-      const userVariables = Object.values(allVariables[params.textDocument.uri])
-        .filter((variable) =>
-          allScopes.isInScope(params.position, {
-            line: variable.line,
-            character: variable.column,
           })
-        )
-        .map((variable) => ({
-          label: variable.name,
-          kind: CompletionItemKind.Variable,
-          data: variable.name,
-        }));
+        );
 
-      return [...functions, ...constants, ...userVariables];
+        const userVariables = Object.values(
+          allVariables[params.textDocument.uri]
+        )
+          .filter((variable) =>
+            allScopes.isInScope(params.position, {
+              line: variable.line,
+              character: variable.column,
+            })
+          )
+          .map((variable) => ({
+            label: variable.name,
+            kind: CompletionItemKind.Variable,
+            data: variable.name,
+          }));
+
+        return [...functions, ...constants, ...userVariables];
+      }
+    } catch (e) {
+      console.error('Error in onCompletion:', e);
+      return [];
     }
   }
 );
@@ -793,24 +888,24 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
 
 // This handler resolves additional information for the item selected in
 // the completion list.
-connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
-  // if (item.data === 'llSay') {
-  //   item.detail = 'llSay(integer channel, string msg)';
-  //   item.documentation =
-  //     'Says the text supplied in <= string msg on channel supplied in integer channel. The message can be heard 20m away, usually.';
-  // }
-  // if (Object.keys(allConstants).includes(item.data)) {
-  //   item.kind = CompletionItemKind.Constant;
-  // }
-  // if (item.data === 1) {
-  //   item.detail = 'TypeScript details'lS
-  //   item.documentation = 'TypeScript documentation';
-  // } else if (item.data === 2) {
-  //   item.detail = 'JavaScript details';
-  //   item.documentation = 'JavaScript documentation';
-  // }
-  return item;
-});
+// connection.onCompletionResolve((item: CompletionItem): CompletionItem => {
+//   // if (item.data === 'llSay') {
+//   //   item.detail = 'llSay(integer channel, string msg)';
+//   //   item.documentation =
+//   //     'Says the text supplied in <= string msg on channel supplied in integer channel. The message can be heard 20m away, usually.';
+//   // }
+//   // if (Object.keys(allConstants).includes(item.data)) {
+//   //   item.kind = CompletionItemKind.Constant;
+//   // }
+//   // if (item.data === 1) {
+//   //   item.detail = 'TypeScript details'lS
+//   //   item.documentation = 'TypeScript documentation';
+//   // } else if (item.data === 2) {
+//   //   item.detail = 'JavaScript details';
+//   //   item.documentation = 'JavaScript documentation';
+//   // }
+//   return item;
+// });
 
 const allFunctionNames = Object.keys(allFunctions);
 connection.onSignatureHelp(
@@ -865,7 +960,9 @@ connection.onDefinition((params): LocationLink[] | null => {
   if (!word) return null;
 
   if (!allVariables[params.textDocument.uri])
-    allVariables[params.textDocument.uri] = scanDocument(document.getText());
+    allVariables[params.textDocument.uri] = scanDocumentForVariables(
+      document.getText()
+    );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => {
       let referenceFound = false;
@@ -907,7 +1004,9 @@ connection.onReferences((params): Location[] | null => {
   if (!word) return null;
 
   if (!allVariables[params.textDocument.uri])
-    allVariables[params.textDocument.uri] = scanDocument(document.getText());
+    allVariables[params.textDocument.uri] = scanDocumentForVariables(
+      document.getText()
+    );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => variable.name === word
   );
@@ -928,7 +1027,9 @@ connection.onDocumentHighlight((params): DocumentHighlight[] | null => {
   if (!word) return null;
 
   if (!allVariables[params.textDocument.uri])
-    allVariables[params.textDocument.uri] = scanDocument(document.getText());
+    allVariables[params.textDocument.uri] = scanDocumentForVariables(
+      document.getText()
+    );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => {
       let referenceFound = false;
@@ -978,7 +1079,9 @@ connection.onPrepareRename((params): { defaultBehavior: boolean } | null => {
   if (!word) return null;
 
   if (!allVariables[params.textDocument.uri])
-    allVariables[params.textDocument.uri] = scanDocument(document.getText());
+    allVariables[params.textDocument.uri] = scanDocumentForVariables(
+      document.getText()
+    );
   let reference: Position | null = null;
   Object.values(allVariables[params.textDocument.uri]).forEach((variable) => {
     variable.references.forEach((position) => {
@@ -1011,7 +1114,9 @@ connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
   if (!word) return null;
 
   if (!allVariables[params.textDocument.uri])
-    allVariables[params.textDocument.uri] = scanDocument(document.getText());
+    allVariables[params.textDocument.uri] = scanDocumentForVariables(
+      document.getText()
+    );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => {
       let referenceFound = false;
@@ -1241,6 +1346,64 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
 
   return result;
 });
+
+connection.languages.inlayHint.on((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) return [];
+  const resultInlayHints = [] as InlayHint[];
+
+  const documentText = document.getText();
+  const documentLines = documentText.split('\n');
+
+  try {
+    const functionCalls: LSLFunctionCall[] =
+      scanDocumentForFunctionCalls(documentText);
+    functionCalls.forEach((funcCall) => {
+      const funcCommaLocations = findFunctionCommaLocations({
+        textDocument: params.textDocument,
+        position: {
+          line: funcCall.line,
+          character: funcCall.character + funcCall.functionName.length,
+        },
+      });
+      allFunctions[funcCall.functionName]?.parameters.forEach(
+        (param, index) => {
+          let tempLineNumber = funcCommaLocations[index].position.line;
+          let tempCharNumber = funcCommaLocations[index].position.character + 1;
+          let charAtPosition =
+            documentLines[tempLineNumber].charAt(tempCharNumber);
+          while (/\s/.test(charAtPosition)) {
+            tempCharNumber++;
+            if (tempCharNumber >= documentLines[tempLineNumber].length) {
+              tempLineNumber++;
+              if (tempLineNumber >= documentLines.length) break;
+              tempCharNumber = 0;
+            }
+            charAtPosition =
+              documentLines[tempLineNumber].charAt(tempCharNumber);
+          }
+          const hint = InlayHint.create(
+            Position.create(tempLineNumber, tempCharNumber),
+            param.name + ':',
+            InlayHintKind.Parameter
+          );
+          hint.paddingRight = true;
+          resultInlayHints.push(hint);
+        }
+      );
+    });
+  } catch (e) {
+    console.error('Error while computing inlay hints:', e);
+  }
+  return resultInlayHints;
+});
+
+// TODO: See if this could be used later
+// connection.languages.inlayHint.resolve((hint) => {
+//   (hint.label as InlayHintLabelPart[])[0].tooltip = 'tooltip';
+//   // hint.textEdits = [TextEdit.insert(Position.create(1, 1), 'number')];
+//   return hint;
+// });
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events

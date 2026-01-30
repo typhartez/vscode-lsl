@@ -62,3 +62,7 @@ export type LSLVariable = {
   columnWithType: number;
   references: LSLReference[];
 };
+
+export type LSLFunctionCall = Position & {
+	functionName: string;
+}

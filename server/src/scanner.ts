@@ -1,12 +1,13 @@
+import fs from 'fs';
 import getCommentedOutSections from './comments';
-import { LSLType, LSLVariable } from './lslTypes';
+import { LSLType, LSLVariable, LSLFunctionCall, LSLFunction } from './lslTypes';
 import getQuoteRanges from './quoteRanges';
 import { convertToType } from './types';
 import getScopes from './scopes';
 
 export type Variables = { [key: string]: LSLVariable };
 
-const scanDocument = (document: string): Variables => {
+export const scanDocumentForVariables = (document: string): Variables => {
   const allVariables: { [key: string]: LSLVariable } = {};
   const commentedOutSections = getCommentedOutSections(document);
   const lines = document.split('\n');
@@ -61,7 +62,8 @@ const scanDocument = (document: string): Variables => {
           return;
 
         let trimmedMatch = match;
-        while (trimmedMatch.includes('  ')) trimmedMatch = trimmedMatch.replace('  ', ' ');
+        while (trimmedMatch.includes('  '))
+          trimmedMatch = trimmedMatch.replace('  ', ' ');
         const [type, name] = trimmedMatch.split(' ');
         allVariables[`${name}:${lineNum}`] = {
           name,
@@ -84,9 +86,12 @@ const scanDocument = (document: string): Variables => {
         references.forEach((_, refNum) => {
           let colNum = -1;
           for (let i = 0; i <= refNum; i++) {
-            colNum = line
-              .slice(colNum + 1)
-              .search(new RegExp(`\\b${variable.name}\\b`, 'gm')) + colNum + 1;
+            colNum =
+              line
+                .slice(colNum + 1)
+                .search(new RegExp(`\\b${variable.name}\\b`, 'gm')) +
+              colNum +
+              1;
           }
           if (
             !commentedOutSections.isInSection(lineNum, colNum) &&
@@ -120,9 +125,40 @@ const scanDocument = (document: string): Variables => {
     });
   });
 
-  console.log(allVariables);
-
   return allVariables;
 };
 
-export default scanDocument;
+const allFunctions: { [key: string]: LSLFunction } = JSON.parse(
+  fs.readFileSync(`${__dirname}/../../functions.json`, { encoding: 'utf8' })
+);
+
+export const scanDocumentForFunctionCalls = (document: string): LSLFunctionCall[] => {
+  const functionCalls: LSLFunctionCall[] = [];
+  const commentedOutSections = getCommentedOutSections(document);
+  const lines = document.split('\n');
+
+  lines.forEach((line, lineNum) => {
+    const quoteRanges = getQuoteRanges(line);
+    const functionCallMatches = line.matchAll(/[a-zA-Z_][a-zA-Z0-9_]*\s*(?=\()/gm);
+    for (const match of functionCallMatches) {
+      const colNum = match.index ?? -1;
+      if (
+        colNum === -1 ||
+        commentedOutSections.isInSection(lineNum, colNum) ||
+        quoteRanges.isInRange(colNum)
+      ) {
+        continue;
+      }
+      const functionName = match[0].trim();
+      if (allFunctions[functionName]) {
+        functionCalls.push({
+          line: lineNum,
+          character: colNum,
+          functionName,
+        });
+      }
+    }
+  });
+  
+  return functionCalls;
+};
