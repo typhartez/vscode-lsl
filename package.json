@@ -4,7 +4,7 @@
   "description": "Advanced support of LSL (Linden Scripting Language) in Visual Studio Code",
   "author": "jyaoma",
   "license": "MIT",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "icon": "./icons/lsl.png",
   "publisher": "jyaoma",
   "repository": {
@@ -27,26 +27,7 @@
   "contributes": {
     "configuration": {
       "type": "object",
-      "title": "Example configuration",
-      "properties": {
-        "lslLanguageServer.maxNumberOfProblems": {
-          "scope": "resource",
-          "type": "number",
-          "default": 100,
-          "description": "Controls the maximum number of problems produced by the server."
-        },
-        "lslLanguageServer.trace.server": {
-          "scope": "window",
-          "type": "string",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
-          "default": "off",
-          "description": "Traces the communication between VS Code and the language server."
-        }
-      },
+      "title": "LSL Language Server",
       "languages": [
         {
           "id": "lsl",
