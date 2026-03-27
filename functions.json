@@ -9147,12 +9147,6 @@
 		"parameters": [
 			{
 				"type": "integer",
-				"name": "link",
-				"subtype": "link",
-				"description": "boolean, sound queuing: TRUE enables, FALSE (default) disables"
-			},
-			{
-				"type": "integer",
 				"name": "queue",
 				"subtype": "boolean",
 				"description": ""
