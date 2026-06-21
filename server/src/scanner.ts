@@ -7,6 +7,88 @@ import getScopes from './scopes';
 
 export type Variables = { [key: string]: LSLVariable };
 
+export const scanDocumentForUserFunctions = (document: string): { [name: string]: LSLFunction } => {
+  const userFunctions: { [name: string]: LSLFunction } = {};
+  const scopes = getScopes(document);
+  const lines = document.split('\n');
+
+  let foundFirstState = false;
+
+  const filteredScopes = scopes.scopes.filter(
+    (scope) =>
+      !scope.name ||
+      !(
+        ['if', 'else if', 'else', 'for', 'while', 'do', 'switch'].includes(
+          scope.name
+        ) ||
+        scope.name.startsWith('case ') ||
+        scope.name.startsWith('#define ')
+      )
+  );
+
+  filteredScopes.forEach((scope) => {
+    if (scope.name) {
+      if (scope.name === 'default' || scope.name.startsWith('state ')) {
+        foundFirstState = true;
+      } else if (!foundFirstState) {
+        // User defined function
+        const functionName = scope.name.trim();
+        if (!functionName) return;
+
+        let signatureText = '';
+        if (scope.nameStartLine !== undefined) {
+          if (scope.nameStartLine === scope.startLine) {
+            signatureText = lines[scope.startLine].substring(0, scope.startCol);
+          } else {
+            signatureText = lines[scope.nameStartLine];
+            for (let i = scope.nameStartLine + 1; i < scope.startLine; i++) {
+              signatureText += ' ' + lines[i];
+            }
+            signatureText += ' ' + lines[scope.startLine].substring(0, scope.startCol);
+          }
+        }
+
+        const args: any[] = [];
+        let returnType = LSLType.Void;
+
+        const argsMatch = signatureText.match(/\((.*)\)/);
+        let textBeforeParen = signatureText;
+        if (argsMatch) {
+          textBeforeParen = signatureText.substring(0, argsMatch.index!);
+          const argsStr = argsMatch[1];
+          if (argsStr.trim()) {
+            argsStr.split(',').forEach(arg => {
+              const parts = arg.trim().split(/\s+/);
+              if (parts.length >= 2) {
+                const argType = convertToType(parts[0]);
+                const argName = parts[parts.length - 1]; // get the last part as name in case of extra spaces
+                args.push({ [argName]: { type: argType, tooltip: '' } });
+              }
+            });
+          }
+        }
+
+        const returnMatch = textBeforeParen.match(/(integer|float|string|key|vector|rotation|quaternion|quarternion|list)\s+/);
+        if (returnMatch) {
+          returnType = convertToType(returnMatch[1].trim());
+        }
+
+        userFunctions[functionName] = {
+          arguments: args,
+          energy: 0,
+          'func-id': 0,
+          return: returnType,
+          sleep: 0,
+          tooltip: '',
+          categories: []
+        };
+      }
+    }
+  });
+
+  return userFunctions;
+};
+
 export const scanDocumentForVariables = (document: string): Variables => {
   const allVariables: { [key: string]: LSLVariable } = {};
   const commentedOutSections = getCommentedOutSections(document);

@@ -34,6 +34,7 @@ import fs from 'fs';
 import { parse } from 'yaml';
 import type {
   LSLDefinitionYaml,
+  LSLFunction,
   LSLFunctionCall,
 } from './lslTypes';
 
@@ -41,6 +42,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
   scanDocumentForVariables,
   scanDocumentForFunctionCalls,
+  scanDocumentForUserFunctions,
   Variables,
 } from './scanner';
 import getQuoteRanges from './quoteRanges';
@@ -86,8 +88,11 @@ const findFunctionName = (
   let parenFound = false;
   const bracketMatch: string[] = [];
 
+  const userFuncs = allUserFunctions[_textDocumentPosition.textDocument.uri] || {};
+  const validFuncNames = [...allFunctionNames, ...Object.keys(userFuncs)];
+
   while (
-    !(allFunctionNames.includes(funcName) && parenFound) &&
+    !(validFuncNames.includes(funcName) && parenFound) &&
     !'{};'.includes(line[colNumber])
   ) {
     const char = line[colNumber--];
@@ -373,12 +378,16 @@ documents.onDidClose((e) => {
 });
 
 const allVariables: { [uri: string]: Variables } = {};
+const allUserFunctions: { [uri: string]: { [name: string]: LSLFunction } } = {};
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent((change) => {
   getCommentedOutSections(change.document.getText());
   allVariables[change.document.uri] = scanDocumentForVariables(
+    change.document.getText()
+  );
+  allUserFunctions[change.document.uri] = scanDocumentForUserFunctions(
     change.document.getText()
   );
 });
@@ -414,17 +423,18 @@ connection.onCompletion(
         const functionNameInfo = findFunctionName(params);
         if (!functionNameInfo) return [];
         const { funcName, parenFound, numberOfCommas } = functionNameInfo;
+        const isUserFunc = allUserFunctions[params.textDocument.uri]?.[funcName];
         if (
-          !allFunctionNames.includes(funcName) ||
+          (!allFunctionNames.includes(funcName) && !isUserFunc) ||
           !parenFound ||
           !funcName ||
           ['if', 'for', 'while'].includes(funcName)
         )
           return [];
 
-        const currentFunction = allFunctions[funcName];
+        const currentFunction = allFunctions[funcName] || allUserFunctions[params.textDocument.uri][funcName];
         const { arguments: args } = currentFunction;
-        const currentParam = Object.values(args[numberOfCommas])[0];
+        const currentParam = Object.values(args[numberOfCommas] || {})[0];
         if (!currentParam) return [];
         const { type, tooltip } = currentParam;
         const name = Object.keys(args[numberOfCommas])[0];
@@ -785,6 +795,26 @@ connection.onCompletion(
             };
           }
         );
+        const userFuncs = Object.keys(allUserFunctions[params.textDocument.uri] || {}).map<CompletionItem>(
+          (name) => {
+            const func = allUserFunctions[params.textDocument.uri][name];
+            return {
+              label: name,
+              kind: CompletionItemKind.Function,
+              data: name,
+              detail: `${
+                func.return && func.return !== 'void' ? `(${func.return}) ` : ''
+              }${name}(${func.arguments
+                .map((a) => {
+                  const argumentName = Object.keys(a)[0];
+                  const argumentType = Object.values(a)[0].type;
+                  return `${argumentType} ${argumentName}`;
+                })
+                .join(', ')})`,
+              documentation: func.tooltip,
+            };
+          }
+        );
         const constants = Object.keys(allConstants).map<CompletionItem>(
           (name) => ({
             label: name,
@@ -810,7 +840,7 @@ connection.onCompletion(
             data: variable.name,
           }));
 
-        return [...functions, ...constants, ...userVariables];
+        return [...functions, ...userFuncs, ...constants, ...userVariables];
       }
     } catch (e) {
       console.error('Error in onCompletion:', e);
@@ -835,7 +865,7 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
     return { contents: hoverContent };
   }
 
-  const lslFunction = allFunctions[word];
+  const lslFunction = allFunctions[word] || (allUserFunctions[params.textDocument.uri] && allUserFunctions[params.textDocument.uri][word]);
   if (lslFunction) {
     const hoverContent = [];
     if (lslFunction['god-mode']) {
@@ -882,7 +912,9 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
         }`
       );
     });
-    hoverContent.push(`@see - https://wiki.secondlife.com/wiki/${word}`);
+    if (allFunctions[word]) {
+      hoverContent.push(`@see - https://wiki.secondlife.com/wiki/${word}`);
+    }
     return { contents: hoverContent };
   }
 
@@ -937,11 +969,12 @@ connection.onSignatureHelp(
     if (!funcName || ['if', 'for', 'while'].includes(funcName))
       return { signatures: [], activeSignature: 0 };
 
-    if (!allFunctionNames.includes(funcName) || !parenFound)
+    const isUserFunc = allUserFunctions[_textDocumentPosition.textDocument.uri]?.[funcName];
+    if ((!allFunctionNames.includes(funcName) && !isUserFunc) || !parenFound)
       return { signatures: [], activeSignature: 0 };
 
-    const { arguments: args, tooltip } =
-      allFunctions[funcName];
+    const functionDef = allFunctions[funcName] || allUserFunctions[_textDocumentPosition.textDocument.uri][funcName];
+    const { arguments: args, tooltip } = functionDef;
 
     let documentation: string | undefined = '';
 
