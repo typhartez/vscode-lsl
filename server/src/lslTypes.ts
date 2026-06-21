@@ -1,42 +1,44 @@
 import { Position } from 'vscode-languageserver';
 
-export type LSLParam = {
-	name: string;
-	type: string;
-	subtype?: string | null;
-	description?: string | null;
+export type LSLArgumentDetails = {
+	tooltip: string;
+	type: LSLType;
+}
+
+export type LSLArgument = {
+	[name: string]: LSLArgumentDetails;
 }
 
 export type LSLFunction = {
-    returnType?: string;
-	returns?: string;
-    description?: string | null;
-	parameters: LSLParam[];
-	id?: number;
+	arguments: LSLArgument[];
+	energy: number,
+	'func-id': number,
+	return: LSLType;
 	sleep: number;
-	energy: number;
-    wiki: string;
-	deprecated?: string;
-	experimental: boolean;
-	godMode: boolean;
-	experience: boolean;
-	broken: boolean;
+	tooltip: string;
+	categories: string[];
+	private?: boolean;
+	deprecated?: boolean;
+	'god-mode'?: boolean;
+	experience?: boolean;
+}
+
+export type LSLDefinitionList<T> = {
+	[name: string]: T
 }
 
 export type LSLEvent = {
-    description?: string | null;
-	parameters: LSLParam[];
-	id?: number;
-    wiki: string;
-	deprecated?: string;
+	arguments: LSLArgument[];
+	tooltip: string;
+	categories: string[];
+	deprecated?: boolean;
 }
 
 export type LSLConstant = {
-	name: string;
-	type: string;
-	value: string;
-	meaning?: string | null;
-	wiki: string;
+	'member-of': string[];
+	tooltip: string;
+	type: LSLType;
+	value: string | number;
 }
 
 export enum LSLType {
@@ -47,7 +49,14 @@ export enum LSLType {
 	Vector = 'vector',
 	Rotation = 'rotation',
 	List = 'list',
+	Void = 'void',
 	Unknown = ''
+}
+
+export type LSLDefinitionYaml = {
+	constants: LSLDefinitionList<LSLConstant>;
+	events: LSLDefinitionList<LSLEvent>;
+	functions: LSLDefinitionList<LSLFunction>;
 }
 
 export type LSLReference = Position & {

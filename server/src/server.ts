@@ -31,10 +31,9 @@ import {
   InlayHintKind,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
+import { parse } from 'yaml';
 import type {
-  LSLConstant,
-  LSLEvent,
-  LSLFunction,
+  LSLDefinitionYaml,
   LSLFunctionCall,
 } from './lslTypes';
 
@@ -48,15 +47,11 @@ import getQuoteRanges from './quoteRanges';
 import getCommentedOutSections from './comments';
 import getScopes from './scopes';
 
-const allFunctions: { [key: string]: LSLFunction } = JSON.parse(
-  fs.readFileSync(`${__dirname}/../../functions.json`, { encoding: 'utf8' })
-);
-const allConstants: { [key: string]: LSLConstant } = JSON.parse(
-  fs.readFileSync(`${__dirname}/../../constants.json`, { encoding: 'utf8' })
-);
-const allEvents: { [key: string]: LSLEvent } = JSON.parse(
-  fs.readFileSync(`${__dirname}/../../events.json`, { encoding: 'utf8' })
-);
+const lslDefinitionYaml: LSLDefinitionYaml = parse(fs.readFileSync(`${__dirname}/../../lsl_definitions.yaml`, { encoding: 'utf8' }));
+
+const allFunctions = lslDefinitionYaml.functions;
+const allConstants = lslDefinitionYaml.constants;
+const allEvents = lslDefinitionYaml.events;
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -398,8 +393,8 @@ const getConstantCompletionItems = (array: string[]): CompletionItem[] =>
     label: name,
     kind: CompletionItemKind.Constant,
     data: name,
-    detail: `${allConstants[name].type} ${allConstants[name].name} = ${allConstants[name].value}`,
-    documentation: allConstants[name].meaning ?? undefined,
+    detail: `${allConstants[name].type} ${name} = ${allConstants[name].value}`,
+    documentation: allConstants[name].tooltip ?? undefined,
     sortText: `**${name}`,
   }));
 
@@ -428,10 +423,29 @@ connection.onCompletion(
           return [];
 
         const currentFunction = allFunctions[funcName];
-        const { parameters } = currentFunction;
-        const currentParam = parameters[numberOfCommas];
+        const { arguments: args } = currentFunction;
+        const currentParam = Object.values(args[numberOfCommas])[0];
         if (!currentParam) return [];
-        const { type, subtype, name } = currentParam;
+        const { type, tooltip } = currentParam;
+        const name = Object.keys(args[numberOfCommas])[0];
+        let subtype = '';
+        if (tooltip.includes('ATTACH_')) subtype = 'attach_point';
+        else if (tooltip.startsWith('Boolean.')) subtype = 'boolean';
+        else if (tooltip.includes('chat channel')) subtype = 'chat';
+        else if (tooltip.includes('CLICK_ACTION_')) subtype = 'click_action';
+        else if (tooltip.includes('LINK_')) subtype = 'link';
+        else if (tooltip.includes('MASK_')) subtype = 'mask';
+        else if (tooltip.includes('ALL_SIDES')) subtype = 'face';
+        else if (tooltip.includes('PASS_')) subtype = 'pass';
+        else if (tooltip.includes('PERM_')) subtype = 'perm';
+        else if (tooltip.includes('PERMISSION_')) subtype = 'permission';
+        else if (tooltip.includes('STATUS_')) subtype = 'status';
+        else if (tooltip.includes('VEHICLE_FLAG_')) subtype = 'vehicle_flag';
+        else if (tooltip.includes('VEHICLE_TYPE_')) subtype = 'vehicle_type';
+        else if (tooltip.includes('VEHICLE_') && type === 'float') subtype = 'vehicle_float';
+        else if (tooltip.includes('VEHICLE_') && type === 'vector') subtype = 'vehicle_vector';
+        else if (tooltip.includes('VEHICLE_') && type === 'rotation') subtype = 'vehicle_rotation';
+        else if (funcName === 'llSetTextureAnim' && numberOfCommas === 0) subtype = 'texture_anim';
         const smartCompletionItems: CompletionItem[] = [];
         switch (subtype) {
           case 'attach_point':
@@ -732,8 +746,8 @@ connection.onCompletion(
               label: name,
               kind: CompletionItemKind.Constant,
               data: name,
-              detail: `${allConstants[name].type} ${allConstants[name].name} = ${allConstants[name].value}`,
-              documentation: allConstants[name].meaning ?? undefined,
+              detail: `${allConstants[name].type} ${name} = ${allConstants[name].value}`,
+              documentation: allConstants[name].tooltip ?? undefined,
             }))
         );
         return smartCompletionItems;
@@ -746,14 +760,11 @@ connection.onCompletion(
               tags.push(CompletionItemTag.Deprecated);
             }
 
-            let documentation = func.description || '';
-            if (func.returnType) {
+            let documentation = func.tooltip || '';
+            if (func.return) {
               if (documentation !== '') {
                 documentation += '\n\n';
               }
-              documentation += `Returns a ${func.returnType} ${
-                func.returns ?? ''
-              }`;
             }
 
             return {
@@ -761,9 +772,13 @@ connection.onCompletion(
               kind: CompletionItemKind.Function,
               data: name,
               detail: `${
-                func.returnType ? `(${func.returnType}) ` : ''
-              }${name}(${func.parameters
-                .map((p) => `${p.type} ${p.name}`)
+                func.return && func.return !== 'void' ? `(${func.return}) ` : ''
+              }${name}(${func.arguments
+                .map((a) => {
+                  const argumentName = Object.keys(a)[0];
+                  const argumentType = Object.values(a)[0].type;
+                  return `${argumentType} ${argumentName}`;
+                })
                 .join(', ')})`,
               documentation,
               tags,
@@ -775,8 +790,8 @@ connection.onCompletion(
             label: name,
             kind: CompletionItemKind.Constant,
             data: name,
-            detail: `${allConstants[name].type} ${allConstants[name].name} = ${allConstants[name].value}`,
-            documentation: allConstants[name].meaning ?? undefined,
+            detail: `${allConstants[name].type} ${name} = ${allConstants[name].value}`,
+            documentation: allConstants[name].tooltip ?? undefined,
           })
         );
 
@@ -812,74 +827,80 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
 
   const lslConstant = allConstants[word];
   if (lslConstant) {
-    const hoverContent = [`\`\`\`lsl\n${lslConstant.name}\n\`\`\``];
-    if (lslConstant.meaning) {
-      hoverContent.push(...lslConstant.meaning.split('\n'));
+    const hoverContent = [`\`\`\`lsl\n${word}\n\`\`\``];
+    if (lslConstant.tooltip) {
+      hoverContent.push(...lslConstant.tooltip.split('\n'));
     }
-    hoverContent.push(`@see - ${lslConstant.wiki}`);
+    hoverContent.push(`@see - https://wiki.secondlife.com/wiki/${word}`);
     return { contents: hoverContent };
   }
 
   const lslFunction = allFunctions[word];
   if (lslFunction) {
     const hoverContent = [];
-    if (lslFunction.godMode) {
+    if (lslFunction['god-mode']) {
       hoverContent.push(`This function requires god-mode.`);
     }
     if (lslFunction.deprecated) {
       hoverContent.push(
-        `@deprecated${
-          lslFunction.deprecated !== 'none'
-            ? ` - Use ${lslFunction.deprecated} instead`
-            : ''
-        }`
+        `@deprecated`
       );
     }
-    if (lslFunction.broken) {
-      hoverContent.push(
-        `@deprecated - This function is either broken or does not do anything.`
-      );
-    }
-    if (lslFunction.experimental) {
-      hoverContent.push(
-        `This is an experimental function currently being tested on the beta-grid.`
-      );
-    }
+    // if (lslFunction.broken) {
+    //   hoverContent.push(
+    //     `@deprecated - This function is either broken or does not do anything.`
+    //   );
+    // }
+    // if (lslFunction.experimental) {
+    //   hoverContent.push(
+    //     `This is an experimental function currently being tested on the beta-grid.`
+    //   );
+    // }
     if (lslFunction.experience) {
       hoverContent.push(`This function requires an experience.`);
     }
     hoverContent.push(
       `\`\`\`lsl\n${
-        lslFunction.returnType ? `(${lslFunction.returnType}) ` : ''
-      }${word}(${lslFunction.parameters
-        .map((p) => `${p.type} ${p.name}`)
+        lslFunction.return && lslFunction.return !== 'void' ? `(${lslFunction.return}) ` : ''
+      }${word}(${lslFunction.arguments
+        .map((a) => {
+          const argumentName = Object.keys(a)[0];
+          const argumentType = Object.values(a)[0].type;
+          return `${argumentType} ${argumentName}`;
+        })
         .join(', ')})\n\`\`\``
     );
-    if (lslFunction.description) {
-      hoverContent.push(...lslFunction.description.split('\n'));
+    if (lslFunction.tooltip) {
+      hoverContent.push(...lslFunction.tooltip.split('\n'));
     }
-    lslFunction.parameters.forEach((p) => {
+    lslFunction.arguments.forEach((a) => {
+      const argumentName = Object.keys(a)[0];
+      const argumentDetails = Object.values(a)[0];
       hoverContent.push(
-        `@param \`${p.type} ${p.name}\`${
-          p.description ? ` - ${p.description}` : ''
+        `@param \`${argumentDetails.type} ${argumentName}\`${
+          argumentDetails.tooltip ? ` - ${argumentDetails.tooltip}` : ''
         }`
       );
     });
-    hoverContent.push(`@see - ${lslFunction.wiki}`);
+    hoverContent.push(`@see - https://wiki.secondlife.com/wiki/${word}`);
     return { contents: hoverContent };
   }
 
   const lslEvent = allEvents[word];
   if (lslEvent) {
     const hoverContent = [
-      `\`\`\`lsl\n${word}(${lslEvent.parameters
-        .map((p) => `${p.type} ${p.name}`)
+      `\`\`\`lsl\n${word}(${lslEvent.arguments
+        .map((a) => {
+          const argumentName = Object.keys(a)[0];
+          const argumentType = Object.values(a)[0].type;
+          return `${argumentType} ${argumentName}`;
+        })
         .join(', ')})\n\`\`\``,
     ];
-    if (lslEvent.description) {
-      hoverContent.push(...lslEvent.description.split('\n'));
+    if (lslEvent.tooltip) {
+      hoverContent.push(...lslEvent.tooltip.split('\n'));
     }
-    hoverContent.push(`@see - ${lslEvent.wiki}`);
+    hoverContent.push(`@see - https://wiki.secondlife.com/wiki/${word}`);
     return { contents: hoverContent };
   }
 
@@ -919,16 +940,13 @@ connection.onSignatureHelp(
     if (!allFunctionNames.includes(funcName) || !parenFound)
       return { signatures: [], activeSignature: 0 };
 
-    const { parameters, returnType, returns, description } =
+    const { arguments: args, tooltip } =
       allFunctions[funcName];
 
     let documentation: string | undefined = '';
 
-    if (returnType && returns) {
-      documentation += `Returns a ${returnType} ${returns}\n\n`;
-    }
-    if (description) {
-      documentation += description;
+    if (tooltip) {
+      documentation += tooltip;
     }
     if (documentation === '') {
       documentation = undefined;
@@ -937,14 +955,22 @@ connection.onSignatureHelp(
     return {
       signatures: [
         {
-          label: `${funcName}(${parameters
-            .map((p) => `${p.type} ${p.name}`)
+          label: `${funcName}(${args
+            .map((a) => {
+              const argumentName = Object.keys(a)[0];
+              const argumentType = Object.values(a)[0].type;
+              return `${argumentType} ${argumentName}`;
+            })
             .join(', ')})`,
           documentation,
-          parameters: parameters.map((p) => ({
-            label: `${p.type} ${p.name}`,
-            documentation: p.description ?? undefined,
-          })),
+          parameters: args.map((a) => {
+            const argumentName = Object.keys(a)[0];
+            const argumentDetails = Object.values(a)[0];
+            return {
+              label: `${argumentDetails.type} ${argumentName}`,
+              documentation: argumentDetails.tooltip ?? undefined,
+            };
+          }),
         },
       ],
       activeSignature: 0,
@@ -1366,7 +1392,7 @@ connection.languages.inlayHint.on((params) => {
           character: funcCall.character + funcCall.functionName.length,
         },
       });
-      allFunctions[funcCall.functionName]?.parameters.forEach(
+      allFunctions[funcCall.functionName]?.arguments.forEach(
         (param, index) => {
           let tempLineNumber = funcCommaLocations[index].position.line;
           let tempCharNumber = funcCommaLocations[index].position.character + 1;
@@ -1384,7 +1410,7 @@ connection.languages.inlayHint.on((params) => {
           }
           const hint = InlayHint.create(
             Position.create(tempLineNumber, tempCharNumber),
-            param.name + ':',
+            Object.keys(param)[0] + ':',
             InlayHintKind.Parameter
           );
           hint.paddingRight = true;
