@@ -73,6 +73,13 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
           returnType = convertToType(returnMatch[1].trim());
         }
 
+        let lineNum = scope.nameStartLine ?? scope.startLine;
+        let colNum = lines[lineNum].indexOf(functionName);
+        if (colNum === -1 && scope.nameStartLine !== scope.startLine && scope.startLine !== undefined) {
+           lineNum = scope.startLine;
+           colNum = lines[lineNum].indexOf(functionName);
+        }
+
         userFunctions[functionName] = {
           arguments: args,
           energy: 0,
@@ -80,7 +87,9 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
           return: returnType,
           sleep: 0,
           tooltip: '',
-          categories: []
+          categories: [],
+          line: lineNum,
+          column: Math.max(0, colNum)
         };
       }
     }
@@ -232,13 +241,11 @@ export const scanDocumentForFunctionCalls = (document: string): LSLFunctionCall[
         continue;
       }
       const functionName = match[0].trim();
-      if (allFunctions[functionName]) {
-        functionCalls.push({
-          line: lineNum,
-          character: colNum,
-          functionName,
-        });
-      }
+      functionCalls.push({
+        line: lineNum,
+        character: colNum,
+        functionName,
+      });
     }
   });
   

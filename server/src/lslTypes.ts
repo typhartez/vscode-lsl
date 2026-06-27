@@ -21,6 +21,8 @@ export type LSLFunction = {
 	deprecated?: boolean;
 	'god-mode'?: boolean;
 	experience?: boolean;
+	line?: number;
+	column?: number;
 }
 
 export type LSLDefinitionList<T> = {

@@ -1018,6 +1018,28 @@ connection.onDefinition((params): LocationLink[] | null => {
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
 
+  if (!allUserFunctions[params.textDocument.uri])
+    allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
+      document.getText()
+    );
+
+  const userFunc = allUserFunctions[params.textDocument.uri][word];
+  if (userFunc && userFunc.line !== undefined && userFunc.column !== undefined) {
+    return [
+      LocationLink.create(
+        params.textDocument.uri,
+        {
+          start: { line: userFunc.line, character: 0 },
+          end: { line: userFunc.line, character: userFunc.column + word.length },
+        },
+        {
+          start: { line: userFunc.line, character: userFunc.column },
+          end: { line: userFunc.line, character: userFunc.column + word.length },
+        }
+      ),
+    ];
+  }
+
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
       document.getText()
@@ -1061,6 +1083,26 @@ connection.onReferences((params): Location[] | null => {
   if (document === undefined) return null;
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
+
+  if (!allUserFunctions[params.textDocument.uri])
+    allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
+      document.getText()
+    );
+
+  const userFunc = allUserFunctions[params.textDocument.uri][word];
+  if (userFunc) {
+    const functionCalls = scanDocumentForFunctionCalls(document.getText());
+    const usages = functionCalls
+      .filter((call) => call.functionName === word)
+      .map((call) =>
+        Location.create(params.textDocument.uri, {
+          start: { line: call.line, character: call.character },
+          end: { line: call.line, character: call.character + word.length },
+        })
+      );
+    
+    return usages;
+  }
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
