@@ -383,13 +383,17 @@ const allUserFunctions: { [uri: string]: { [name: string]: LSLFunction } } = {};
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
 documents.onDidChangeContent((change) => {
-  getCommentedOutSections(change.document.getText());
-  allVariables[change.document.uri] = scanDocumentForVariables(
-    change.document.getText()
-  );
-  allUserFunctions[change.document.uri] = scanDocumentForUserFunctions(
-    change.document.getText()
-  );
+  try {
+    getCommentedOutSections(change.document.getText());
+    allVariables[change.document.uri] = scanDocumentForVariables(
+      change.document.getText()
+    );
+    allUserFunctions[change.document.uri] = scanDocumentForUserFunctions(
+      change.document.getText()
+    );
+  } catch (e) {
+    console.error('Error processing document change:', e);
+  }
 });
 
 connection.onDidChangeWatchedFiles((_change) => {

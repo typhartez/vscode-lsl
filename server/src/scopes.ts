@@ -104,9 +104,11 @@ const getScopes = (document: string): Scopes => {
         } else if (char === '}') {
           currentLine = '';
           scopeNameStart = colNum + 1;
-          scopes[currentScopeIndex].endLine = lineNum;
-          scopes[currentScopeIndex].endCol = colNum;
-          currentScopeIndex = scopes[currentScopeIndex].parentIndex;
+          if (scopes[currentScopeIndex]) {
+            scopes[currentScopeIndex].endLine = lineNum;
+            scopes[currentScopeIndex].endCol = colNum;
+            currentScopeIndex = scopes[currentScopeIndex].parentIndex;
+          }
         } else if ('()'.includes(char)) {
           parenLevel += char === '(' ? 1 : -1;
         } else if (char.match(/[A-Za-z0-9_ #]/) && parenLevel === 0) {
