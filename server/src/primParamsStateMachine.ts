@@ -165,3 +165,106 @@ const primParamsStateMachine = (primParams: string): string[] => {
 };
 
 export default primParamsStateMachine;
+
+export interface PrimParamSignature {
+    /** The PRIM_* constant name, e.g. "PRIM_COLOR" */
+    paramName: string;
+    /** All argument labels for this PRIM_* block, e.g. ["face", "color", "alpha"] */
+    args: string[];
+    /** Which argument is currently active (0-based index into args) */
+    activeArg: number;
+}
+
+/**
+ * Given the text of a rules list and the index of the token at the cursor,
+ * returns information about the PRIM_* block the cursor is inside, for use
+ * in signature help.
+ *
+ * @param primParams - The full rules list text (e.g. "[PRIM_COLOR, 0, <1,1,1>, 1.0]")
+ * @param tokenIndex - Which comma-separated element the cursor is in (0-based)
+ */
+export const getPrimParamSignature = (primParams: string, tokenIndex: number): PrimParamSignature | null => {
+    const tokens = tokenize(primParams);
+
+    let state: 'param' | 'args' = 'param';
+    let expectedArgs: string[] = [];
+    let currentArgIndex = 0;
+    let currentParamName = '';
+
+    for (let i = 0; i <= tokenIndex; i++) {
+        const token = tokens[i];
+        // If we've run out of tokens but are expecting args, return current signature
+        // (handles case where cursor is after a comma, expecting the next argument)
+        if (token === undefined) {
+            if (state === 'args' && currentArgIndex < expectedArgs.length && expectedArgs.length > 0) {
+                return { paramName: currentParamName, args: expectedArgs, activeArg: currentArgIndex };
+            }
+            return null;
+        }
+
+        if (state === 'param') {
+            currentParamName = token;
+            currentArgIndex = 0;
+            if (paramSpecs[token]) {
+                expectedArgs = [...paramSpecs[token]];
+                state = 'args';
+            } else if (token === 'PRIM_TYPE') {
+                expectedArgs = ['flag'];
+                state = 'args';
+            } else {
+                expectedArgs = [];
+                // unknown param — stay in param state
+            }
+            // If cursor is on this PRIM_* constant itself, return immediately
+            if (i === tokenIndex) {
+                return expectedArgs.length > 0
+                    ? { paramName: currentParamName, args: expectedArgs, activeArg: -1 }
+                    : null;
+            }
+        } else if (state === 'args') {
+            if (currentArgIndex < expectedArgs.length) {
+                // Capture active arg BEFORE any transitions
+                if (i === tokenIndex) {
+                    return { paramName: currentParamName, args: expectedArgs, activeArg: currentArgIndex };
+                }
+
+                const expected = expectedArgs[currentArgIndex];
+                if (expected === 'flag') {
+                    if (token === 'PRIM_TYPE_BOX' || token === 'PRIM_TYPE_CYLINDER' || token === 'PRIM_TYPE_PRISM') {
+                        expectedArgs = expectedArgs.concat(['hole_shape', 'cut', 'hollow', 'twist', 'top_size', 'top_shear']);
+                    } else if (token === 'PRIM_TYPE_SPHERE') {
+                        expectedArgs = expectedArgs.concat(['hole_shape', 'cut', 'hollow', 'twist', 'dimple']);
+                    } else if (token === 'PRIM_TYPE_TORUS' || token === 'PRIM_TYPE_TUBE' || token === 'PRIM_TYPE_RING') {
+                        expectedArgs = expectedArgs.concat(['hole_shape', 'cut', 'hollow', 'twist', 'hole_size', 'top_shear', 'advanced_cut', 'taper', 'revolutions', 'radius_offset', 'skew']);
+                    } else if (token === 'PRIM_TYPE_SCULPT') {
+                        expectedArgs = expectedArgs.concat(['map', 'type']);
+                    }
+                }
+                currentArgIndex++;
+                if (currentArgIndex >= expectedArgs.length) {
+                    state = 'param';
+                }
+            } else {
+                // Overflowed — treat this token as the start of the next PRIM_* block
+                currentParamName = token;
+                currentArgIndex = 0;
+                if (paramSpecs[token]) {
+                    expectedArgs = [...paramSpecs[token]];
+                    state = 'args';
+                } else if (token === 'PRIM_TYPE') {
+                    expectedArgs = ['flag'];
+                    state = 'args';
+                } else {
+                    expectedArgs = [];
+                    state = 'param';
+                }
+                if (i === tokenIndex) {
+                    return expectedArgs.length > 0
+                        ? { paramName: currentParamName, args: expectedArgs, activeArg: -1 }
+                        : null;
+                }
+            }
+        }
+    }
+    return null;
+};

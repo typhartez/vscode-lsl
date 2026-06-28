@@ -48,7 +48,7 @@ import {
 import getQuoteRanges from './quoteRanges';
 import getCommentedOutSections from './comments';
 import getScopes from './scopes';
-import primParamsStateMachine from './primParamsStateMachine';
+import primParamsStateMachine, { getPrimParamSignature } from './primParamsStateMachine';
 
 const lslDefinitionYaml: LSLDefinitionYaml = parse(fs.readFileSync(`${__dirname}/../../lsl_definitions.yaml`, { encoding: 'utf8' }));
 
@@ -219,6 +219,118 @@ const findFunctionCommaLocations = (
     }
   }
   return commaPositions;
+};
+
+/**
+ * If the cursor is inside a `[...]` rules list that is the rules argument of a
+ * llSetPrimitiveParams / llSetLinkPrimitiveParams* call, returns:
+ *   - listText: the full text of the list
+ *   - tokenIndex: the 0-based index of the comma-delimited element the cursor is in
+ * Returns null if the cursor is not in such a context.
+ */
+const findPrimParamPosition = (
+  _pos: TextDocumentPositionParams
+): { listText: string; tokenIndex: number } | null => {
+  const document = documents.get(_pos.textDocument.uri);
+  const text = document?.getText();
+  if (!text) return null;
+  const lines = text.split('\n');
+
+  // Walk backward from cursor to find the opening '[' for a list argument,
+  // and keep track of what prim-function and argument index we are in.
+  let lineNumber = _pos.position.line;
+  let colNumber = _pos.position.character - 1;
+  let bracketDepth = 0;
+  let vectorDepth = 0;
+  let parenDepth = 0;
+  let commasInList = 0;
+  let inString = false;
+
+  const commentedOutSections = getCommentedOutSections(text);
+
+  while (lineNumber >= 0) {
+    const line = lines[lineNumber];
+    while (colNumber >= 0) {
+      const ch = line[colNumber];
+      if (commentedOutSections.isInSection(lineNumber, colNumber)) {
+        colNumber--;
+        continue;
+      }
+      if (inString) {
+        if (ch === '"' && (colNumber === 0 || line[colNumber - 1] !== '\\')) inString = false;
+        colNumber--;
+        continue;
+      }
+      if (ch === '"') { inString = true; colNumber--; continue; }
+
+      if (ch === '>') { vectorDepth++; }
+      else if (ch === '<') { if (vectorDepth > 0) vectorDepth--; }
+      else if (ch === ')') { parenDepth++; }
+      else if (ch === '(') {
+        if (parenDepth > 0) { parenDepth--; }
+        else {
+          // We've exited the function call paren — bail
+          return null;
+        }
+      }
+      else if (ch === ']') { bracketDepth++; }
+      else if (ch === '[') {
+        if (bracketDepth > 0) { bracketDepth--; }
+        else {
+          // Found the opening '[' of the list containing the cursor
+          // Now check if this list is the rules arg of a prim-param function
+          const openBracketPos: TextDocumentPositionParams = {
+            textDocument: _pos.textDocument,
+            position: { line: lineNumber, character: colNumber },
+          };
+          const funcInfo = findFunctionName(openBracketPos);
+          if (!funcInfo) return null;
+          const { funcName, numberOfCommas: argIndex } = funcInfo;
+          const isRulesArg =
+            (funcName === 'llSetPrimitiveParams' && argIndex === 0) ||
+            (funcName === 'llSetLinkPrimitiveParams' && argIndex === 1) ||
+            (funcName === 'llSetLinkPrimitiveParamsFast' && argIndex === 1);
+          if (!isRulesArg) return null;
+
+          // Extract the list text from '[' forward to the matching ']'
+          let absIndex = 0;
+          for (let i = 0; i < lineNumber; i++) absIndex += lines[i].length + 1;
+          absIndex += colNumber;
+
+          let depth = 0;
+          let vd = 0;
+          let pd = 0;
+          let inStr = false;
+          let endIndex = absIndex;
+          while (endIndex < text.length) {
+            const c = text[endIndex];
+            if (inStr) {
+              if (c === '"' && text[endIndex - 1] !== '\\') inStr = false;
+            } else if (c === '"') { inStr = true; }
+            else if (c === '<') { vd++; }
+            else if (c === '>') { if (vd > 0) vd--; }
+            else if (c === '(') { pd++; }
+            else if (c === ')') { if (pd > 0) pd--; }
+            else if (c === '[') { depth++; }
+            else if (c === ']') {
+              depth--;
+              if (depth === 0) { endIndex++; break; }
+            }
+            endIndex++;
+          }
+          const listText = text.substring(absIndex, endIndex);
+          return { listText, tokenIndex: commasInList };
+        }
+      }
+      else if (ch === ',' && bracketDepth === 0 && vectorDepth === 0 && parenDepth === 0) {
+        commasInList++;
+      }
+      colNumber--;
+    }
+    lineNumber--;
+    if (lineNumber >= 0) colNumber = lines[lineNumber].length - 1;
+  }
+  return null;
 };
 
 const getWord = (document: string, position: Position): string | null => {
@@ -966,6 +1078,31 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
 const allFunctionNames = Object.keys(allFunctions);
 connection.onSignatureHelp(
   (_textDocumentPosition: TextDocumentPositionParams): SignatureHelp => {
+    // Check if cursor is inside a PRIM_* rules list first
+    try {
+      const primPos = findPrimParamPosition(_textDocumentPosition);
+      if (primPos) {
+        const sig = getPrimParamSignature(primPos.listText, primPos.tokenIndex);
+        if (sig) {
+          const sigLabel = `${sig.paramName}, ${sig.args.join(', ')}`;
+          return {
+            signatures: [
+              {
+                label: sigLabel,
+                parameters: sig.args.map((argName) => ({
+                  label: argName,
+                })),
+              },
+            ],
+            activeSignature: 0,
+            activeParameter: sig.activeArg >= 0 ? sig.activeArg : 0,
+          };
+        }
+      }
+    } catch (e) {
+      console.error('Error computing prim param signature help:', e);
+    }
+
     const functionNameInfo = findFunctionName(_textDocumentPosition);
     if (!functionNameInfo) return { signatures: [], activeSignature: 0 };
     const { funcName, parenFound, numberOfCommas } = functionNameInfo;
