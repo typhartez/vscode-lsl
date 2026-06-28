@@ -48,6 +48,7 @@ import {
 import getQuoteRanges from './quoteRanges';
 import getCommentedOutSections from './comments';
 import getScopes from './scopes';
+import primParamsStateMachine from './primParamsStateMachine';
 
 const lslDefinitionYaml: LSLDefinitionYaml = parse(fs.readFileSync(`${__dirname}/../../lsl_definitions.yaml`, { encoding: 'utf8' }));
 
@@ -292,11 +293,9 @@ connection.onInitialize((params: InitializeParams) => {
         triggerCharacters: ['(', ','],
       },
       hoverProvider: true,
-      inlayHintProvider: true,
-      // TODO: See if this could be used later
-      // inlayHintProvider: {
-      //   resolveProvider: true,
-      // },
+      inlayHintProvider: {
+        resolveProvider: false,
+      },
     },
   };
   if (hasWorkspaceFolderCapability) {
@@ -1452,6 +1451,88 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
   return result;
 });
 
+const getListElementsPositions = (
+  startPos: Position,
+  documentText: string
+): { positions: Position[], listString: string } | null => {
+  let index = 0;
+  const lines = documentText.split('\n');
+  for (let i = 0; i < startPos.line; i++) {
+    index += lines[i].length + 1;
+  }
+  index += startPos.character;
+
+  while (index < documentText.length && documentText[index] !== '[') {
+    if (documentText[index] === ';' || documentText[index] === ')') return null;
+    index++;
+  }
+  if (index >= documentText.length) return null;
+
+  const startIndex = index;
+  let inString = false;
+  let escape = false;
+  let bracketMatch = 0;
+  let vectorMatch = 0;
+  let parenMatch = 0;
+  const commaIndexes: number[] = [index];
+
+  while (index < documentText.length) {
+    const char = documentText[index];
+    if (inString) {
+      if (char === '\n') {
+        inString = false;
+        escape = false;
+      } else if (escape) {
+        escape = false;
+      } else if (char === '\\') {
+        escape = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === '<') {
+      vectorMatch++;
+    } else if (char === '>') {
+      if (vectorMatch > 0) vectorMatch--;
+    } else if (char === '(') {
+      parenMatch++;
+    } else if (char === ')') {
+      if (parenMatch > 0) parenMatch--;
+    } else if (char === '[') {
+      bracketMatch++;
+    } else if (char === ']') {
+      bracketMatch--;
+      if (bracketMatch === 0) {
+        index++;
+        break;
+      }
+    } else if (char === ',' && bracketMatch === 1 && vectorMatch === 0 && parenMatch === 0) {
+      commaIndexes.push(index);
+    }
+    index++;
+  }
+
+  const listString = documentText.substring(startIndex, index);
+  
+  const positionFromIndex = (idx: number): Position => {
+    let l = 0;
+    let c = 0;
+    for (let i = 0; i < idx; i++) {
+      if (documentText[i] === '\n') {
+        l++;
+        c = 0;
+      } else {
+        c++;
+      }
+    }
+    return { line: l, character: c };
+  };
+
+  const positions = commaIndexes.map(idx => positionFromIndex(idx));
+  return { positions, listString };
+};
+
 connection.languages.inlayHint.on((params) => {
   const document = documents.get(params.textDocument.uri);
   if (!document) return [];
@@ -1464,6 +1545,7 @@ connection.languages.inlayHint.on((params) => {
     const functionCalls: LSLFunctionCall[] =
       scanDocumentForFunctionCalls(documentText);
     functionCalls.forEach((funcCall) => {
+      if (!allFunctions[funcCall.functionName]) return;
       const funcCommaLocations = findFunctionCommaLocations({
         textDocument: params.textDocument,
         position: {
@@ -1473,6 +1555,7 @@ connection.languages.inlayHint.on((params) => {
       });
       allFunctions[funcCall.functionName]?.arguments.forEach(
         (param, index) => {
+          if (index >= funcCommaLocations.length) return;
           let tempLineNumber = funcCommaLocations[index].position.line;
           let tempCharNumber = funcCommaLocations[index].position.character + 1;
           let charAtPosition =
@@ -1494,6 +1577,43 @@ connection.languages.inlayHint.on((params) => {
           );
           hint.paddingRight = true;
           resultInlayHints.push(hint);
+
+          if (
+            (funcCall.functionName === 'llSetPrimitiveParams' && index === 0) ||
+            (funcCall.functionName === 'llSetLinkPrimitiveParams' && index === 1) ||
+            (funcCall.functionName === 'llSetLinkPrimitiveParamsFast' && index === 1)
+          ) {
+            const listInfo = getListElementsPositions(
+              Position.create(funcCommaLocations[index].position.line, funcCommaLocations[index].position.character + 1),
+              documentText
+            );
+            if (listInfo) {
+              const labels = primParamsStateMachine(listInfo.listString);
+              listInfo.positions.forEach((pos, i) => {
+                if (i < labels.length && labels[i] !== 'unknown' && labels[i] !== 'param') {
+                  let l = pos.line;
+                  let c = pos.character + 1;
+                  let charAtPos = documentLines[l].charAt(c);
+                  while (/\s/.test(charAtPos)) {
+                    c++;
+                    if (c >= documentLines[l].length) {
+                      l++;
+                      if (l >= documentLines.length) break;
+                      c = 0;
+                    }
+                    charAtPos = documentLines[l].charAt(c);
+                  }
+                  const listHint = InlayHint.create(
+                    Position.create(l, c),
+                    labels[i] + ':',
+                    InlayHintKind.Parameter
+                  );
+                  listHint.paddingRight = true;
+                  resultInlayHints.push(listHint);
+                }
+              });
+            }
+          }
         }
       );
     });
