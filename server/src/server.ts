@@ -139,7 +139,7 @@ const findFunctionName = (
         bracketMatch.push(char);
         break;
       default:
-        if (char.match(/[a-zA-Z0-9_]/)) {
+        if (char && char.match(/[a-zA-Z0-9_]/)) {
           funcName = char + funcName;
         }
         break;
@@ -1089,13 +1089,13 @@ connection.onSignatureHelp(
             signatures: [
               {
                 label: sigLabel,
-                parameters: sig.args.map((argName) => ({
+                parameters: [{ label: sig.paramName }, ...sig.args.map((argName) => ({
                   label: argName,
-                })),
+                }))],
               },
             ],
             activeSignature: 0,
-            activeParameter: sig.activeArg >= 0 ? sig.activeArg : 0,
+            activeParameter: sig.activeArg >= -1 ? sig.activeArg + 1 : 0
           };
         }
       }
