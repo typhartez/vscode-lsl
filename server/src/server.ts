@@ -1679,11 +1679,14 @@ connection.languages.inlayHint.on((params) => {
   const documentText = document.getText();
   const documentLines = documentText.split('\n');
 
+  const userFuncs = allUserFunctions[params.textDocument.uri] || {};
+
   try {
     const functionCalls: LSLFunctionCall[] =
       scanDocumentForFunctionCalls(documentText);
     functionCalls.forEach((funcCall) => {
-      if (!allFunctions[funcCall.functionName]) return;
+      const isUserFunc = userFuncs[funcCall.functionName];
+      if (!allFunctions[funcCall.functionName] && !isUserFunc) return;
       const funcCommaLocations = findFunctionCommaLocations({
         textDocument: params.textDocument,
         position: {
@@ -1691,7 +1694,8 @@ connection.languages.inlayHint.on((params) => {
           character: funcCall.character + funcCall.functionName.length,
         },
       });
-      allFunctions[funcCall.functionName]?.arguments.forEach(
+      const funcDef = allFunctions[funcCall.functionName] || isUserFunc;
+      funcDef?.arguments.forEach(
         (param, index) => {
           if (index >= funcCommaLocations.length) return;
           let tempLineNumber = funcCommaLocations[index].position.line;
