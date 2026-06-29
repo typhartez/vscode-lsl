@@ -1,10 +1,10 @@
-// LSL script for testing undeclared variable detection
+// LSL script for testing diagnostics
 
+// Test 1: Undeclared variable (should be flagged)
 default
 {
     state_entry()
     {
-        // This should be flagged - undefinedVar is not declared
         llSay(0, undefinedVar);
     }
 }

@@ -12,7 +12,21 @@ suite('Should get diagnostics', () => {
 	test('Detects undeclared variables', async () => {
 		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'diagnostics.lsl'));
 		await testDiagnostics(docUri, [
-			{ message: "Undeclared variable 'undefinedVar'", range: toRange(7, 16, 7, 28), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
+			{ message: "Undeclared variable 'undefinedVar'", range: toRange(5, 13, 5, 25), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
+		]);
+	});
+
+	test('Detects missing default state', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'missing-default.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: 'LSL script is missing a default state', range: toRange(0, 0, 0, 1), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
+		]);
+	});
+
+	test('Detects multiple default states', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'double-default.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: 'Multiple default states defined', range: toRange(13, 0, 13, 7), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
 		]);
 	});
 });

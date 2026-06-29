@@ -1,0 +1,25 @@
+default
+{
+    state_entry()
+    {
+        llSay(0, "Hello, Avatar!");
+    }
+
+    touch_start(integer num_detected)
+    {
+        llSay(0, "Touched.");
+    }
+}
+
+default
+{
+    state_entry()
+    {
+        llSay(0, "Hello, Avatar!");
+    }
+
+    touch_start(integer num_detected)
+    {
+        llSay(0, "Touched.");
+    }
+}

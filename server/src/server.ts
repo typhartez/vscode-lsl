@@ -1856,11 +1856,14 @@ const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
       const beforeText = line.substring(0, colNum).trimEnd();
       if (/^(integer|float|string|key|list|vector|rotation|quaternion)$/i.test(beforeText)) continue;
 
-      // Skip if preceded by a type keyword and any amount of whitespace (handles "integer myVar")
+      // Skip if preceded by a type keyword (handles "integer myVar")
       const justBeforeMatch = line.substring(0, colNum);
       const lastWordBefore = justBeforeMatch.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*$/);
       const typeKeywords = ['integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion'];
       if (lastWordBefore && typeKeywords.includes(lastWordBefore[0].trim().toLowerCase())) continue;
+
+      // Skip if preceded by 'state' keyword (state declaration like "state custom {")
+      if (/\bstate\s*$/i.test(justBeforeMatch.trimEnd())) continue;
 
       // Check if this variable is declared and in scope
       const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
@@ -1888,6 +1891,63 @@ const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
   return diagnostics;
 };
 
+/**
+ * Checks for missing or multiple default states in LSL scripts.
+ */
+const checkDefaultState = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const allScopes = getScopes(documentText);
+
+  // Find all state declarations
+  const defaultStates: number[] = [];
+  const stateDeclarations: number[] = [];
+
+  allScopes.scopes.forEach(scope => {
+    if (scope.name && (scope.name === 'default' || scope.name.startsWith('state '))) {
+      stateDeclarations.push(scope.startLine);
+      if (scope.name === 'default') {
+        defaultStates.push(scope.startLine);
+      }
+    }
+  });
+
+  // Check for missing default state (LSL requires exactly one)
+  if (defaultStates.length === 0 && stateDeclarations.length > 0) {
+    // Script has states but no default - flag it
+    diagnostics.push(
+      Diagnostic.create(
+        { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+        'LSL script is missing a default state',
+        DiagnosticSeverity.Error,
+        'lsl'
+      )
+    );
+  }
+
+  // Check for multiple default states
+  if (defaultStates.length > 1) {
+    // Get scopes that have default state to find the correct line positions
+    const defaultScopeLines = allScopes.scopes
+      .filter(s => s.name === 'default')
+      .map(s => s.nameStartLine ?? s.startLine);
+
+    defaultScopeLines.forEach((line, index) => {
+      if (index > 0) { // First one is valid, subsequent ones are errors
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line, character: 0 }, end: { line, character: 7 } },
+            'Multiple default states defined',
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    });
+  }
+
+  return diagnostics;
+};
+
 // Handle diagnostics request
 connection.languages.diagnostics.on((params) => {
   const document = documents.get(params.textDocument.uri);
@@ -1900,11 +1960,11 @@ connection.languages.diagnostics.on((params) => {
   try {
     // Check for undeclared variables
     const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText());
-    connection.console.log(`Diagnostics found: ${undeclaredDiagnostics.length} issues`);
-    undeclaredDiagnostics.forEach(d => {
-      connection.console.log(`  - ${d.message} at line ${d.range.start.line}`);
-    });
     allDiagnostics.push(...undeclaredDiagnostics);
+
+    // Check for missing/multiple default states
+    const defaultStateDiagnostics = checkDefaultState(document.getText());
+    allDiagnostics.push(...defaultStateDiagnostics);
   } catch (e) {
     connection.console.error(`Error computing diagnostics: ${e}`);
   }
