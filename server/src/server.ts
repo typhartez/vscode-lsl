@@ -29,6 +29,9 @@ import {
   InlayHint,
   Position,
   InlayHintKind,
+  Diagnostic,
+  DiagnosticSeverity,
+  DiagnosticRelatedInformation,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
 import { parse } from 'yaml';
@@ -407,6 +410,12 @@ connection.onInitialize((params: InitializeParams) => {
       hoverProvider: true,
       inlayHintProvider: {
         resolveProvider: false,
+      },
+      // Tell the client that this server supports diagnostics.
+      diagnosticProvider: {
+        documentSelector: [{ scheme: 'file', language: 'lsl' }],
+        interFileDependencies: false,
+        workspaceDiagnostics: false,
       },
     },
   };
@@ -1775,6 +1784,136 @@ connection.languages.inlayHint.on((params) => {
 //   // hint.textEdits = [TextEdit.insert(Position.create(1, 1), 'number')];
 //   return hint;
 // });
+
+/**
+ * Scans a document for all potential identifier references that could be undeclared variables.
+ * Returns positions where identifiers are used but not declared in scope.
+ */
+const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const lines = documentText.split('\n');
+  const allScopes = getScopes(documentText);
+  const commentedOutSections = getCommentedOutSections(documentText);
+
+  // Always scan fresh for variables to ensure we have up-to-date data
+  const declaredVariables = scanDocumentForVariables(documentText);
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+
+  // Collect all known valid names (functions, events, constants, keywords)
+  const knownNames = new Set<string>();
+  Object.keys(userFuncs).forEach(name => knownNames.add(name));
+  Object.keys(allFunctions).forEach(name => knownNames.add(name));
+  Object.keys(allEvents).forEach(name => knownNames.add(name));
+  Object.keys(allConstants).forEach(name => knownNames.add(name));
+  const keywords = [
+    'default', 'state', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+    'integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion',
+    'return', 'jump', 'break', 'continue', 'TRUE', 'FALSE'
+  ];
+  keywords.forEach(kw => knownNames.add(kw));
+
+  // First, collect all #define names from the document to add them to known names
+  // This handles identifiers defined via preprocessor
+  lines.forEach((line) => {
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('#define')) {
+      const afterDefine = trimmedLine.substring(7).trim();
+      const defineNameMatch = afterDefine.match(/([a-zA-Z_][a-zA-Z0-9_]*)/);
+      if (defineNameMatch) {
+        knownNames.add(defineNameMatch[1]);
+      }
+    }
+  });
+
+  // Scan each line for undeclared variable references
+  lines.forEach((line, lineNum) => {
+    // Skip processing on #define lines - all identifiers on these lines are either
+    // the defined name or values/references used to define them
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('#define')) {
+      return; // Skip this line
+    }
+
+    const quoteRanges = getQuoteRanges(line);
+
+    // Find all identifier references in this line
+    const identifierMatches = line.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/gm);
+
+    for (const match of identifierMatches) {
+      const colNum = match.index ?? -1;
+      const word = match[1];
+
+      // Skip if no match or in comments/strings
+      if (colNum === -1) continue;
+      if (commentedOutSections.isInSection(lineNum, colNum)) continue;
+      if (quoteRanges.isInRange(colNum)) continue;
+
+      // Skip if it's a known function/event/constant/keyword
+      if (knownNames.has(word)) continue;
+
+      // Skip if preceded immediately by a type keyword (variable declaration)
+      // The text immediately before this identifier should end with a type keyword followed by optional whitespace
+      const beforeText = line.substring(0, colNum).trimEnd();
+      if (/^(integer|float|string|key|list|vector|rotation|quaternion)$/i.test(beforeText)) continue;
+
+      // Skip if preceded by a type keyword and any amount of whitespace (handles "integer myVar")
+      const justBeforeMatch = line.substring(0, colNum);
+      const lastWordBefore = justBeforeMatch.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*$/);
+      const typeKeywords = ['integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion'];
+      if (lastWordBefore && typeKeywords.includes(lastWordBefore[0].trim().toLowerCase())) continue;
+
+      // Check if this variable is declared and in scope
+      const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
+        variable.name === word &&
+        allScopes.isInScope(
+          { line: lineNum, character: colNum },
+          { line: variable.line, character: variable.column }
+        )
+      );
+
+      // If not declared or not in scope, flag it as undeclared
+      if (!isDeclaredAndInScope) {
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line: lineNum, character: colNum }, end: { line: lineNum, character: colNum + word.length } },
+            `Undeclared variable '${word}'`,
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
+// Handle diagnostics request
+connection.languages.diagnostics.on((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return { kind: 'full', items: [] };
+  }
+
+  const allDiagnostics: Diagnostic[] = [];
+
+  try {
+    // Check for undeclared variables
+    const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText());
+    connection.console.log(`Diagnostics found: ${undeclaredDiagnostics.length} issues`);
+    undeclaredDiagnostics.forEach(d => {
+      connection.console.log(`  - ${d.message} at line ${d.range.start.line}`);
+    });
+    allDiagnostics.push(...undeclaredDiagnostics);
+  } catch (e) {
+    connection.console.error(`Error computing diagnostics: ${e}`);
+  }
+
+  return {
+    kind: 'full',
+    items: allDiagnostics
+  };
+});
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events
