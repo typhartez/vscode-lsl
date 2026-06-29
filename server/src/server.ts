@@ -1084,13 +1084,14 @@ connection.onSignatureHelp(
       if (primPos) {
         const sig = getPrimParamSignature(primPos.listText, primPos.tokenIndex);
         if (sig) {
-          const sigLabel = `${sig.paramName}, ${sig.args.join(', ')}`;
+          const sigLabel = `${sig.paramName}, ${sig.args.map((argName, i) =>
+            `${sig.types[i]} ${argName}`).join(', ')}`;
           return {
             signatures: [
               {
                 label: sigLabel,
-                parameters: [{ label: sig.paramName }, ...sig.args.map((argName) => ({
-                  label: argName,
+                parameters: [{ label: sig.paramName }, ...sig.args.map((argName, i) => ({
+                  label: `${sig.types[i]} ${argName}`,
                 }))],
               },
             ],

@@ -56,6 +56,97 @@ const paramSpecs: Record<string, string[]> = {
     PRIM_TEXTURE: ["face", "texture", "repeats", "offsets", "rotation_in_radians"]
 };
 
+// Mapping of argument names to their LSL types
+const argTypeMap: Record<string, string> = {
+    // Face/integer arguments
+    face: 'integer',
+    alpha_mode: 'integer',
+    alpha_cutoff: 'float',
+    shiny: 'integer',
+    bump: 'integer',
+    cast: 'integer',
+    action: 'integer',
+    allow: 'integer',
+    fullbright: 'integer',
+    glow: 'float',
+    texture: 'string',
+    scale: 'vector',
+    offset: 'vector',
+    rotation_in_radians: 'float',
+    color_tint: 'vector',
+    alpha_tint: 'float',
+    double_sided: 'integer',
+    emissive_tint: 'vector',
+    metallic_factor: 'float',
+    roughness_factor: 'float',
+    link: 'integer',
+    material: 'integer',
+    enable: 'integer',
+    controls: 'integer',
+    url: 'string',
+    loop: 'integer',
+    zoom: 'integer',
+    interact: 'integer',
+    illumination: 'integer',
+    width: 'integer',
+    height: 'integer',
+    perms: 'integer',
+    whitelist: 'list',
+    name: 'string',
+    axis: 'vector',
+    spinrate: 'float',
+    gain: 'float',
+    phantom: 'integer',
+    physics: 'integer',
+    physics_shape_type: 'integer',
+    play: 'integer',
+    color: 'vector',
+    intensity: 'float',
+    radius: 'float',
+    falloff: 'float',
+    position: 'vector',
+    fov: 'float',
+    focus: 'float',
+    ambience: 'float',
+    clip_distance: 'float',
+    rotation: 'rotation',
+    scripted_only: 'integer',
+    active: 'integer',
+    rot: 'rotation',
+    size: 'vector',
+    slice: 'vector',
+    glossiness: 'vector',
+    environment: 'float',
+    temp: 'integer',
+    type: 'integer',
+    text: 'string',
+    alpha: 'float',
+    // PRIM_TYPE special arguments
+    flag: 'integer',
+    hole_shape: 'integer',
+    cut: 'vector',
+    hollow: 'float',
+    twist: 'vector',
+    top_size: 'vector',
+    top_shear: 'vector',
+    dimple: 'vector',
+    hole_size: 'vector',
+    advanced_cut: 'vector',
+    taper: 'vector',
+    revolutions: 'float',
+    radius_offset: 'float',
+    skew: 'float',
+    map: 'string',
+    // Additional args from PRIM_SPECULAR, PRIM_NORMAL, PRIM_FLEXIBLE
+    repeats: 'vector',
+    description: 'string',
+    gravity: 'float',
+    friction: 'float',
+    wind: 'float',
+    tension: 'float',
+    force: 'vector'
+};
+
 const tokenize = (input: string): string[] => {
     let content = input.trim();
     if (content.startsWith('[')) content = content.substring(1);
@@ -171,6 +262,8 @@ export interface PrimParamSignature {
     paramName: string;
     /** All argument labels for this PRIM_* block, e.g. ["face", "color", "alpha"] */
     args: string[];
+    /** The LSL type for each argument, e.g. ["integer", "vector", "float"] */
+    types: string[];
     /** Which argument is currently active (0-based index into args) */
     activeArg: number;
 }
@@ -183,6 +276,13 @@ export interface PrimParamSignature {
  * @param primParams - The full rules list text (e.g. "[PRIM_COLOR, 0, <1,1,1>, 1.0]")
  * @param tokenIndex - Which comma-separated element the cursor is in (0-based)
  */
+/**
+ * Helper to get the LSL type for an argument name.
+ */
+const getArgTypes = (args: string[]): string[] => {
+    return args.map(arg => argTypeMap[arg] || 'float');
+};
+
 export const getPrimParamSignature = (primParams: string, tokenIndex: number): PrimParamSignature | null => {
     const tokens = tokenize(primParams);
 
@@ -197,7 +297,7 @@ export const getPrimParamSignature = (primParams: string, tokenIndex: number): P
         // (handles case where cursor is after a comma, expecting the next argument)
         if (token === undefined) {
             if (state === 'args' && currentArgIndex < expectedArgs.length && expectedArgs.length > 0) {
-                return { paramName: currentParamName, args: expectedArgs, activeArg: currentArgIndex };
+                return { paramName: currentParamName, args: expectedArgs, types: getArgTypes(expectedArgs), activeArg: currentArgIndex };
             }
             return null;
         }
@@ -218,14 +318,14 @@ export const getPrimParamSignature = (primParams: string, tokenIndex: number): P
             // If cursor is on this PRIM_* constant itself, return immediately
             if (i === tokenIndex) {
                 return expectedArgs.length > 0
-                    ? { paramName: currentParamName, args: expectedArgs, activeArg: -1 }
+                    ? { paramName: currentParamName, args: expectedArgs, types: getArgTypes(expectedArgs), activeArg: -1 }
                     : null;
             }
         } else if (state === 'args') {
             if (currentArgIndex < expectedArgs.length) {
                 // Capture active arg BEFORE any transitions
                 if (i === tokenIndex) {
-                    return { paramName: currentParamName, args: expectedArgs, activeArg: currentArgIndex };
+                    return { paramName: currentParamName, args: expectedArgs, types: getArgTypes(expectedArgs), activeArg: currentArgIndex };
                 }
 
                 const expected = expectedArgs[currentArgIndex];
@@ -260,7 +360,7 @@ export const getPrimParamSignature = (primParams: string, tokenIndex: number): P
                 }
                 if (i === tokenIndex) {
                     return expectedArgs.length > 0
-                        ? { paramName: currentParamName, args: expectedArgs, activeArg: -1 }
+                        ? { paramName: currentParamName, args: expectedArgs, types: getArgTypes(expectedArgs), activeArg: -1 }
                         : null;
                 }
             }
