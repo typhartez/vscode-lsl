@@ -1235,13 +1235,17 @@ connection.onReferences((params): Location[] | null => {
     const functionCalls = scanDocumentForFunctionCalls(document.getText());
     const usages = functionCalls
       .filter((call) => call.functionName === word)
+      .filter((call) =>
+        // Exclude the function definition from the references list
+        !(call.line === userFunc.line && call.character === userFunc.column)
+      )
       .map((call) =>
         Location.create(params.textDocument.uri, {
           start: { line: call.line, character: call.character },
           end: { line: call.line, character: call.character + word.length },
         })
       );
-    
+
     return usages;
   }
 
