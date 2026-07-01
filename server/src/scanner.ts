@@ -31,10 +31,7 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
       if (scope.name === 'default' || scope.name.startsWith('state ')) {
         foundFirstState = true;
       } else if (!foundFirstState) {
-        // User defined function
-        const functionName = scope.name.trim();
-        if (!functionName) return;
-
+        // User defined function - get the signature text first
         let signatureText = '';
         if (scope.nameStartLine !== undefined) {
           if (scope.nameStartLine === scope.startLine) {
@@ -50,6 +47,7 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
 
         const args: any[] = [];
         let returnType = LSLType.Void;
+        let functionName = '';
 
         const argsMatch = signatureText.match(/\((.*)\)/);
         let textBeforeParen = signatureText;
@@ -73,11 +71,30 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
           returnType = convertToType(returnMatch[1].trim());
         }
 
+        // Extract just the function name from textBeforeParen (after return type if present)
+        const funcNameMatch = textBeforeParen.match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*$/);
+        if (funcNameMatch) {
+          functionName = funcNameMatch[1];
+        } else {
+          // Fallback: try to extract from scope.name
+          const nameMatch = scope.name.match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*$/);
+          if (nameMatch) {
+            functionName = nameMatch[1];
+          } else {
+            return; // Can't determine function name
+          }
+        }
+
         let lineNum = scope.nameStartLine ?? scope.startLine;
         let colNum = lines[lineNum].indexOf(functionName);
         if (colNum === -1 && scope.nameStartLine !== scope.startLine && scope.startLine !== undefined) {
            lineNum = scope.startLine;
            colNum = lines[lineNum].indexOf(functionName);
+        }
+
+        // Skip if we couldn't find the function name position
+        if (colNum === -1) {
+          return;
         }
 
         userFunctions[functionName] = {

@@ -29,6 +29,16 @@ suite('Should get diagnostics', () => {
 			{ message: 'Multiple default states defined', range: toRange(13, 0, 13, 7), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
 		]);
 	});
+
+	test('Detects unused user-defined functions', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'unused-vars.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: "Variable 'unusedVar' is set but never read", range: toRange(3, 8, 3, 17), severity: vscode.DiagnosticSeverity.Warning, source: 'lsl' },
+			{ message: "Variable 'unsetVar' is declared but never used", range: toRange(2, 8, 2, 16), severity: vscode.DiagnosticSeverity.Hint, source: 'lsl' },
+			{ message: "Unused function 'myFunc'", range: toRange(8, 8, 8, 14), severity: vscode.DiagnosticSeverity.Hint, source: 'lsl' },
+			{ message: "Unused function 'myOtherFunc'", range: toRange(12, 0, 12, 10), severity: vscode.DiagnosticSeverity.Hint, source: 'lsl' },
+		]);
+	});
 });
 
 function toRange(sLine: number, sChar: number, eLine: number, eChar: number) {
@@ -45,12 +55,19 @@ async function testDiagnostics(docUri: vscode.Uri, expectedDiagnostics: vscode.D
 
 	const actualDiagnostics = vscode.languages.getDiagnostics(docUri);
 
-	assert.equal(actualDiagnostics.length, expectedDiagnostics.length);
+	assert.equal(actualDiagnostics.length, expectedDiagnostics.length,
+		`Expected ${expectedDiagnostics.length} diagnostics, got ${actualDiagnostics.length}`);
 
-	expectedDiagnostics.forEach((expectedDiagnostic, i) => {
-		const actualDiagnostic = actualDiagnostics[i];
-		assert.equal(actualDiagnostic.message, expectedDiagnostic.message);
-		assert.deepEqual(actualDiagnostic.range, expectedDiagnostic.range);
-		assert.equal(actualDiagnostic.severity, expectedDiagnostic.severity);
+	// Check each expected diagnostic exists (order-independent)
+	expectedDiagnostics.forEach((expectedDiagnostic) => {
+		const found = actualDiagnostics.some((actual) =>
+			actual.message === expectedDiagnostic.message &&
+			actual.range.start.line === expectedDiagnostic.range.start.line &&
+			actual.range.start.character === expectedDiagnostic.range.start.character &&
+			actual.range.end.line === expectedDiagnostic.range.end.line &&
+			actual.range.end.character === expectedDiagnostic.range.end.character &&
+			actual.severity === expectedDiagnostic.severity
+		);
+		assert.ok(found, `Expected diagnostic "${expectedDiagnostic.message}" not found`);
 	});
 }
