@@ -31,7 +31,7 @@ import {
   InlayHintKind,
   Diagnostic,
   DiagnosticSeverity,
-  DiagnosticRelatedInformation,
+  DiagnosticTag,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
 import { parse } from 'yaml';
@@ -1974,6 +1974,115 @@ const checkDefaultState = (documentText: string): Diagnostic[] => {
 };
 
 /**
+ * Checks for unused variables - variables that have no read references.
+ * Returns diagnostics: Hint severity for variables with inline initialization only,
+ * Warning severity for variables assigned in separate statements.
+ */
+const checkUnusedVariables = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const declaredVariables = scanDocumentForVariables(documentText);
+
+  Object.values(declaredVariables).forEach((variable) => {
+    // Check if there are any read references
+    const hasReadReferences = variable.references.some((ref) => !ref.isWrite);
+
+    // No read references - check if variable is set but never used
+    if (hasReadReferences) {
+      return;
+    }
+
+    // Check if the declaration has an initial value (e.g., "integer x = 5;")
+    const lines = documentText.split('\n');
+    const declarationLine = lines[variable.line] || '';
+    const hasInitialValue = /=[^=]/.test(declarationLine.substring(variable.column));
+
+    // Check if there are any write references on separate lines (e.g., "myVar = 3;")
+    const hasSeparateWrite = variable.references.some(
+      (ref) => ref.isWrite && ref.line !== variable.line
+    );
+
+    if (hasSeparateWrite) {
+      // Assigned in separate statements - warning (yellow squiggly)
+      diagnostics.push(
+        Diagnostic.create(
+          {
+            start: { line: variable.line, character: variable.column },
+            end: { line: variable.line, character: variable.column + variable.name.length },
+          },
+          `Variable '${variable.name}' is set but never read`,
+          DiagnosticSeverity.Warning,
+          'lsl'
+        )
+      );
+    } else {
+      // No separate assignments - hint (faded out)
+      // This covers both inline init and declared-but-never-touched cases
+      const unnecessaryDiagnostic = Diagnostic.create(
+          {
+            start: { line: variable.line, character: variable.column },
+            end: { line: variable.line, character: variable.column + variable.name.length },
+          },
+          hasInitialValue
+            ? `Unused variable '${variable.name}'`
+            : `Variable '${variable.name}' is declared but never used`,
+          DiagnosticSeverity.Hint,
+          'lsl'
+        );
+      unnecessaryDiagnostic.tags = [DiagnosticTag.Unnecessary];
+      diagnostics.push(
+        unnecessaryDiagnostic
+      );
+    }
+  });
+
+  return diagnostics;
+};
+
+/**
+ * Checks for unused user-defined functions - functions that are defined but never called.
+ */
+const checkUnusedUserFunctions = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+  const functionCalls = scanDocumentForFunctionCalls(documentText);
+
+  // Collect all called function names (excluding the definitions themselves)
+  const calledFunctions = new Set<string>();
+  functionCalls.forEach((call) => {
+    if (userFuncs[call.functionName]) {
+      calledFunctions.add(call.functionName);
+    }
+  });
+
+  // Check each user-defined function
+  Object.entries(userFuncs).forEach(([funcName, func]) => {
+    // Skip deprecated functions - they may intentionally be unused
+    if (func.deprecated) {
+      return;
+    }
+
+    // If the function is defined but never called, flag it
+    if (!calledFunctions.has(funcName)) {
+      if (func.line !== undefined) {
+        const unnecessaryDiagnostic = Diagnostic.create(
+          {
+            start: { line: func.line, character: func.column || 0 },
+            end: { line: func.line, character: (func.column || 0) + funcName.length },
+          },
+          `Unused function '${funcName}'`,
+          DiagnosticSeverity.Hint,
+          'lsl'
+        );
+        unnecessaryDiagnostic.tags = [DiagnosticTag.Unnecessary];
+        diagnostics.push(unnecessaryDiagnostic);
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
+/**
  * Checks for type mismatches in function calls - comparing argument types
  * against expected parameter types.
  */
@@ -2135,6 +2244,15 @@ connection.languages.diagnostics.on((params) => {
   const allDiagnostics: Diagnostic[] = [];
 
   try {
+    // Ensure variables are scanned for this document
+    if (!allVariables[params.textDocument.uri]) {
+      allVariables[params.textDocument.uri] = scanDocumentForVariables(document.getText());
+    }
+
+    // Check for unused variables
+    const unusedDiagnostics = checkUnusedVariables(document.getText());
+    allDiagnostics.push(...unusedDiagnostics);
+
     // Check for undeclared variables
     const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText());
     allDiagnostics.push(...undeclaredDiagnostics);
@@ -2146,6 +2264,10 @@ connection.languages.diagnostics.on((params) => {
     // Check for type mismatches
     const typeMismatchDiagnostics = checkTypeMismatches(document.getText());
     allDiagnostics.push(...typeMismatchDiagnostics);
+
+    // Check for unused user-defined functions
+    const unusedUserFuncDiagnostics = checkUnusedUserFunctions(document.getText());
+    allDiagnostics.push(...unusedUserFuncDiagnostics);
   } catch (e) {
     connection.console.error(`Error computing diagnostics: ${e}`);
   }
