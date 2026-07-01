@@ -31,6 +31,7 @@ import {
   InlayHintKind,
   Diagnostic,
   DiagnosticSeverity,
+  DiagnosticRelatedInformation,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
 import { parse } from 'yaml';
@@ -39,6 +40,7 @@ import type {
   LSLFunction,
   LSLFunctionCall,
 } from './lslTypes';
+import { LSLType } from './lslTypes';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
@@ -410,6 +412,12 @@ connection.onInitialize((params: InitializeParams) => {
       hoverProvider: true,
       inlayHintProvider: {
         resolveProvider: false,
+      },
+      // Tell the client that this server supports diagnostics.
+      diagnosticProvider: {
+        documentSelector: [{ scheme: 'file', language: 'lsl' }],
+        interFileDependencies: false,
+        workspaceDiagnostics: false,
       },
     },
   };
@@ -860,8 +868,8 @@ connection.onCompletion(
                   character: variable.column,
                 }) &&
                 (variable.type === type ||
-                  (['rotation', 'quarternion'].includes(variable.type) &&
-                    ['rotation', 'quarternion'].includes(type)))
+                  (['rotation', 'quaternion'].includes(variable.type) &&
+                    ['rotation', 'quaternion'].includes(type)))
             )
             .map((variable) => ({
               label: variable.name,
@@ -884,10 +892,10 @@ connection.onCompletion(
             .filter(
               (name) =>
                 (allConstants[name].type === type ||
-                  (['rotation', 'quarternion'].includes(
+                  (['rotation', 'quaternion'].includes(
                     allConstants[name].type
                   ) &&
-                    ['rotation', 'quarternion'].includes(type))) &&
+                    ['rotation', 'quaternion'].includes(type))) &&
                 !smartCompletionItems.find(
                   (existing) => existing.label === name
                 )
@@ -1800,6 +1808,352 @@ connection.languages.inlayHint.on((params) => {
 //   // hint.textEdits = [TextEdit.insert(Position.create(1, 1), 'number')];
 //   return hint;
 // });
+
+/**
+ * Scans a document for all potential identifier references that could be undeclared variables.
+ * Returns positions where identifiers are used but not declared in scope.
+ */
+const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const lines = documentText.split('\n');
+  const allScopes = getScopes(documentText);
+  const commentedOutSections = getCommentedOutSections(documentText);
+
+  // Always scan fresh for variables to ensure we have up-to-date data
+  const declaredVariables = scanDocumentForVariables(documentText);
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+
+  // Collect all known valid names (functions, events, constants, keywords)
+  const knownNames = new Set<string>();
+  Object.keys(userFuncs).forEach(name => knownNames.add(name));
+  Object.keys(allFunctions).forEach(name => knownNames.add(name));
+  Object.keys(allEvents).forEach(name => knownNames.add(name));
+  Object.keys(allConstants).forEach(name => knownNames.add(name));
+  const keywords = [
+    'default', 'state', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+    'integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion',
+    'return', 'jump', 'break', 'continue', 'TRUE', 'FALSE'
+  ];
+  keywords.forEach(kw => knownNames.add(kw));
+
+  // First, collect all #define names from the document to add them to known names
+  // This handles identifiers defined via preprocessor
+  lines.forEach((line) => {
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('#define')) {
+      const afterDefine = trimmedLine.substring(7).trim();
+      const defineNameMatch = afterDefine.match(/([a-zA-Z_][a-zA-Z0-9_]*)/);
+      if (defineNameMatch) {
+        knownNames.add(defineNameMatch[1]);
+      }
+    }
+  });
+
+  // Scan each line for undeclared variable references
+  lines.forEach((line, lineNum) => {
+    // Skip processing on #define lines - all identifiers on these lines are either
+    // the defined name or values/references used to define them
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('#define')) {
+      return; // Skip this line
+    }
+
+    const quoteRanges = getQuoteRanges(line);
+
+    // Find all identifier references in this line
+    const identifierMatches = line.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/gm);
+
+    for (const match of identifierMatches) {
+      const colNum = match.index ?? -1;
+      const word = match[1];
+
+      // Skip if no match or in comments/strings
+      if (colNum === -1) continue;
+      if (commentedOutSections.isInSection(lineNum, colNum)) continue;
+      if (quoteRanges.isInRange(colNum)) continue;
+
+      // Skip if it's a known function/event/constant/keyword
+      if (knownNames.has(word)) continue;
+
+      // Skip if preceded immediately by a type keyword (variable declaration)
+      // The text immediately before this identifier should end with a type keyword followed by optional whitespace
+      const beforeText = line.substring(0, colNum).trimEnd();
+      if (/^(integer|float|string|key|list|vector|rotation|quaternion)$/i.test(beforeText)) continue;
+
+      // Skip if preceded by a type keyword (handles "integer myVar")
+      const justBeforeMatch = line.substring(0, colNum);
+      const lastWordBefore = justBeforeMatch.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*$/);
+      const typeKeywords = ['integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion'];
+      if (lastWordBefore && typeKeywords.includes(lastWordBefore[0].trim().toLowerCase())) continue;
+
+      // Skip if preceded by 'state' keyword (state declaration like "state custom {")
+      if (/\bstate\s*$/i.test(justBeforeMatch.trimEnd())) continue;
+
+      // Check if this variable is declared and in scope
+      const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
+        variable.name === word &&
+        allScopes.isInScope(
+          { line: lineNum, character: colNum },
+          { line: variable.line, character: variable.column }
+        )
+      );
+
+      // If not declared or not in scope, flag it as undeclared
+      if (!isDeclaredAndInScope) {
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line: lineNum, character: colNum }, end: { line: lineNum, character: colNum + word.length } },
+            `Undeclared variable '${word}'`,
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
+/**
+ * Checks for missing or multiple default states in LSL scripts.
+ */
+const checkDefaultState = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const allScopes = getScopes(documentText);
+
+  // Find all state declarations
+  const defaultStates: number[] = [];
+  const stateDeclarations: number[] = [];
+
+  allScopes.scopes.forEach(scope => {
+    if (scope.name && (scope.name === 'default' || scope.name.startsWith('state '))) {
+      stateDeclarations.push(scope.startLine);
+      if (scope.name === 'default') {
+        defaultStates.push(scope.startLine);
+      }
+    }
+  });
+
+  // Check for missing default state (LSL requires exactly one)
+  if (defaultStates.length === 0 && stateDeclarations.length > 0) {
+    // Script has states but no default - flag it
+    diagnostics.push(
+      Diagnostic.create(
+        { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+        'LSL script is missing a default state',
+        DiagnosticSeverity.Error,
+        'lsl'
+      )
+    );
+  }
+
+  // Check for multiple default states
+  if (defaultStates.length > 1) {
+    // Get scopes that have default state to find the correct line positions
+    const defaultScopeLines = allScopes.scopes
+      .filter(s => s.name === 'default')
+      .map(s => s.nameStartLine ?? s.startLine);
+
+    defaultScopeLines.forEach((line, index) => {
+      if (index > 0) { // First one is valid, subsequent ones are errors
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line, character: 0 }, end: { line, character: 7 } },
+            'Multiple default states defined',
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    });
+  }
+
+  return diagnostics;
+};
+
+/**
+ * Checks for type mismatches in function calls - comparing argument types
+ * against expected parameter types.
+ */
+const checkTypeMismatches = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const lines = documentText.split('\n');
+  const commentedOutSections = getCommentedOutSections(documentText);
+
+  // Get all defined variables and user functions
+  const declaredVariables = scanDocumentForVariables(documentText);
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+
+  // Build a map of variable name to type
+  const variableTypes: { [name: string]: LSLType } = {};
+  Object.values(declaredVariables).forEach(v => {
+    variableTypes[v.name] = v.type;
+  });
+
+  // Determine the type of an expression at a given position
+  // This is a simplified version - just checks if it's a variable or literal
+  const getArgumentType = (argText: string): LSLType | null => {
+    const trimmed = argText.trim();
+
+    // Check for string literal
+    if (/^".*"$/.test(trimmed)) return LSLType.String;
+
+    // Check for vector literal (<x, y, z>)
+    if (/^<[^,]+, *[^,]+, *[^,]+>$/.test(trimmed.replace(/\s+/g, ' '))) return LSLType.Vector;
+
+    // Check for rotation literal (<x, y, z, s>)
+    if (/^<[^,]+, *[^,]+, *[^,]+, *[^,]+>$/.test(trimmed.replace(/\s+/g, ' '))) return LSLType.Rotation;
+
+    // Check for integer (decimal, no decimal point)
+    if (/^-?\d+$/.test(trimmed)) return LSLType.Integer;
+
+    // Check for float (has decimal point or exponent)
+    if (/^-?\d+\.\d+$/.test(trimmed) || /^-?\d+(e|E)[+-]?\d+$/.test(trimmed)) return LSLType.Float;
+
+    // Check for key literal (starts with " or UUID-like)
+    if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}/.test(trimmed)) return LSLType.Key;
+
+    // Check if it's a known variable
+    if (variableTypes[trimmed]) return variableTypes[trimmed];
+
+    // Check if it's a known constant (all uppercase)
+    if (/^[A-Z][A-Z0-9_]*$/.test(trimmed)) {
+      // Constants have types defined elsewhere, skip for now
+      return null;
+    }
+
+    // Check for list literal ([...]) - we can't easily parse contents
+    if (trimmed.startsWith('[')) return null;
+
+    return null; // Unknown type
+  };
+
+  // Find compatible types (LSL allows some implicit conversions)
+  const isCompatibleType = (actual: LSLType | null, expected: LSLType): boolean => {
+    if (actual === null || actual === LSLType.Unknown) return true; // Unknown, skip
+    if (actual === expected) return true;
+
+    // Integer and float are somewhat interchangeable in LSL
+    if ((actual === LSLType.Integer || actual === LSLType.Float) &&
+        (expected === LSLType.Integer || expected === LSLType.Float)) return true;
+
+    return false;
+  };
+
+  // Scan for function calls and check argument types
+  lines.forEach((line, lineNum) => {
+    const quoteRanges = getQuoteRanges(line);
+    const functionCallMatches = line.matchAll(/[a-zA-Z_][a-zA-Z0-9_]*\s*(?=\()/gm);
+
+    for (const match of functionCallMatches) {
+      const funcColNum = match.index ?? -1;
+      const funcName = match[0].trim();
+
+      if (commentedOutSections.isInSection(lineNum, funcColNum) || quoteRanges.isInRange(funcColNum)) continue;
+
+      // Skip if not a known function
+      const funcDef = allFunctions[funcName] || userFuncs[funcName];
+      if (!funcDef) continue;
+
+      // Find the matching parenthesis and extract arguments
+      const openParenIndex = line.indexOf('(', funcColNum);
+      if (openParenIndex === -1) continue;
+
+      // Simple extraction of arguments (comma-separated within parens)
+      let parenDepth = 0;
+      let argStart = openParenIndex + 1;
+      let argEnd = argStart;
+      let argIndex = 0;
+
+      for (let i = argStart; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '(') parenDepth++;
+        else if (ch === ')') {
+          parenDepth--;
+          if (parenDepth < 0) {
+            argEnd = i;
+            break;
+          }
+        }
+        else if (ch === ',' && parenDepth === 0) {
+          const argText = line.substring(argStart, i).trim();
+          const argType = getArgumentType(argText);
+          const argDef = funcDef.arguments[argIndex];
+
+          if (argDef) {
+            const expectedType = Object.values(argDef)[0].type;
+            if (argType && !isCompatibleType(argType, expectedType as LSLType)) {
+              const startCol = argStart + line.substring(argStart).indexOf(argText.trim());
+              diagnostics.push(Diagnostic.create(
+                { start: { line: lineNum, character: startCol }, end: { line: lineNum, character: startCol + argText.length } },
+                `Type mismatch: expected ${expectedType}, got ${argType}`,
+                DiagnosticSeverity.Error,
+                'lsl'
+              ));
+            }
+          }
+
+          argStart = i + 1;
+          argIndex++;
+        }
+      }
+
+      // Handle last argument
+      if (argIndex < funcDef.arguments.length && argEnd > argStart) {
+        const argText = line.substring(argStart, argEnd).trim();
+        const argType = getArgumentType(argText);
+        const argDef = funcDef.arguments[argIndex];
+
+        if (argDef) {
+          const expectedType = Object.values(argDef)[0].type;
+          if (argType && !isCompatibleType(argType, expectedType as LSLType)) {
+            const startCol = argStart + line.substring(argStart).indexOf(argText.trim());
+            diagnostics.push(Diagnostic.create(
+              { start: { line: lineNum, character: startCol }, end: { line: lineNum, character: startCol + argText.length } },
+              `Type mismatch: expected ${expectedType}, got ${argType}`,
+              DiagnosticSeverity.Error,
+              'lsl'
+            ));
+          }
+        }
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
+// Handle diagnostics request
+connection.languages.diagnostics.on((params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return { kind: 'full', items: [] };
+  }
+
+  const allDiagnostics: Diagnostic[] = [];
+
+  try {
+    // Check for undeclared variables
+    const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText());
+    allDiagnostics.push(...undeclaredDiagnostics);
+
+    // Check for missing/multiple default states
+    const defaultStateDiagnostics = checkDefaultState(document.getText());
+    allDiagnostics.push(...defaultStateDiagnostics);
+
+    // Check for type mismatches
+    const typeMismatchDiagnostics = checkTypeMismatches(document.getText());
+    allDiagnostics.push(...typeMismatchDiagnostics);
+  } catch (e) {
+    connection.console.error(`Error computing diagnostics: ${e}`);
+  }
+
+  return {
+    kind: 'full',
+    items: allDiagnostics
+  };
+});
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events

@@ -10,7 +10,7 @@ default
     state_entry()
     {
         fullScore = 0;
-        llListen(0, "", NULL_KEY, "");
+        llListen(0, "", (key)"00000000-0000-0000-0000-000000000000", "");
     }
 
     listen(integer channel, string name, key id, string message)

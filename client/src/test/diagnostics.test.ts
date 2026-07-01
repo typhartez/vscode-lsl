@@ -5,16 +5,28 @@
 
 import * as vscode from 'vscode';
 import * as assert from 'assert';
-import { getDocUri, activate } from './helper';
+import * as path from 'path';
+import { activate } from './helper';
 
 suite('Should get diagnostics', () => {
-	const docUri = getDocUri('diagnostics.txt');
-
-	test('Diagnoses uppercase texts', async () => {
+	test('Detects undeclared variables', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'diagnostics.lsl'));
 		await testDiagnostics(docUri, [
-			{ message: 'ANY is all uppercase.', range: toRange(0, 0, 0, 3), severity: vscode.DiagnosticSeverity.Warning, source: 'ex' },
-			{ message: 'ANY is all uppercase.', range: toRange(0, 14, 0, 17), severity: vscode.DiagnosticSeverity.Warning, source: 'ex' },
-			{ message: 'OS is all uppercase.', range: toRange(0, 18, 0, 20), severity: vscode.DiagnosticSeverity.Warning, source: 'ex' }
+			{ message: "Undeclared variable 'undefinedVar'", range: toRange(5, 13, 5, 25), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
+		]);
+	});
+
+	test('Detects missing default state', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'missing-default.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: 'LSL script is missing a default state', range: toRange(0, 0, 0, 1), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
+		]);
+	});
+
+	test('Detects multiple default states', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'double-default.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: 'Multiple default states defined', range: toRange(13, 0, 13, 7), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
 		]);
 	});
 });
@@ -27,6 +39,9 @@ function toRange(sLine: number, sChar: number, eLine: number, eChar: number) {
 
 async function testDiagnostics(docUri: vscode.Uri, expectedDiagnostics: vscode.Diagnostic[]) {
 	await activate(docUri);
+
+	// Wait a bit longer for diagnostics to be computed
+	await new Promise(resolve => setTimeout(resolve, 2000));
 
 	const actualDiagnostics = vscode.languages.getDiagnostics(docUri);
 
