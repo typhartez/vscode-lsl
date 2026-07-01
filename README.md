@@ -4,13 +4,14 @@ This extension adds support for LSL (Linden Scripting Language).
 #### Features
 - Syntax highlighting
 - Snippets for event handlers
-- Hovers with definitions of built-in functions and constants
-- Auto-complete for built-in functions and constants
+- Hovers with definitions of constants and built-in as well as user-defined functions
+- Auto-complete for built-in and user-defined functions and constants
 - Signature help
 - Type-aware auto-complete
-- "Go to Defintion" and "Find References"
+- "Go to Definition" and "Find References"
 - Variable rename support
 - Symbols and Outline
+- Error detection
 
 #### Screenshots
 
