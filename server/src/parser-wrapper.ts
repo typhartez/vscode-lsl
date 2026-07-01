@@ -5,12 +5,9 @@ import type { Diagnostic } from 'vscode-languageserver/node';
 import { Position, DiagnosticSeverity } from 'vscode-languageserver/node';
 import path from 'path';
 
-// Note: when running from server/out/, the path resolves to server/src/parser/
-// @ts-expect-error No types
-import TailslideModuleExport from '../src/parser/tailslide.js';
-
 // Lazy-load the WASM module - it will be initialized once
-let errorCollector: { line: number; character: number; message: string; code: string }[] = [];
+// Supports format: ERROR:: (line, col)-(endLine, endCol): [code] message
+let errorCollector: { startLine: number; startCharacter: number; endLine: number; endCharacter: number; message: string; code: string }[] = [];
 
 // Lazy-load the WASM module - it will be initialized once
 let parserModule: any = null;
@@ -22,17 +19,23 @@ export async function initParser(): Promise<void> {
     if (parserModule) return;
 
     // Use require for CommonJS compatibility - parser is in server/src/parser/
+    // Note: when running from server/out/, the path resolves to server/src/parser/
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const TailslideModuleExport = require('../src/parser/tailslide.js');
 
     // Create a print handler function
     const printHandler = (msg: string) => {
-        // Parse error format: ERROR:: ( <line>, <col>): [<code>] <message>
-        const errorMatch = msg.match(/^ERROR::\s*\(\s*(\d+),\s*(\d+)\):\s*\[(\w+)\]\s*(.+)$/);
+        // Parse error format: ERROR:: (line, col)-(endLine, endCol): [code] message
+        const diagnosticRegex = /(ERROR|WARN)::\s*\((\d+),(\d+)\)-\((\d+),(\d+)\):\s*\[(\w+)\]\s*(.+)$/;
+        const errorMatch = msg.match(diagnosticRegex);
         if (errorMatch) {
             errorCollector.push({
-                line: parseInt(errorMatch[1], 10) - 1, // Convert to 0-based
-                character: parseInt(errorMatch[2], 10) - 1, // Convert to 0-based
-                code: errorMatch[3],
-                message: errorMatch[4]
+                startLine: parseInt(errorMatch[2], 10) - 1, // Convert to 0-based
+                startCharacter: parseInt(errorMatch[3], 10) - 1, // Convert to 0-based
+                endLine: parseInt(errorMatch[4], 10) - 1, // Convert to 0-based
+                endCharacter: parseInt(errorMatch[5], 10) - 1, // Convert to 0-based
+                code: errorMatch[6],
+                message: errorMatch[7]
             });
         }
     };
@@ -85,9 +88,10 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
         // Write content to Emscripten virtual filesystem
         parserModule.FS.writeFile('/diagnostic.lsl', text);
         parserModule.callMain(['diagnostic.lsl']);
-    } catch (e: any) {
+    } catch (e: unknown) {
         // ExitStatus exceptions are expected for normal parser exit
-        if (e.name !== 'ExitStatus' && e.name !== 'exit') {
+        const error = e as { name?: string };
+        if (error.name !== 'ExitStatus' && error.name !== 'exit') {
             console.error('Parser error:', e);
         }
     }
@@ -97,8 +101,8 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
         diagnostics.push({
             severity: DiagnosticSeverity.Error,
             range: {
-                start: Position.create(error.line, error.character),
-                end: Position.create(error.line, error.character)
+                start: Position.create(error.startLine, error.startCharacter),
+                end: Position.create(error.endLine, error.endCharacter)
             },
             message: error.message,
             code: error.code,
