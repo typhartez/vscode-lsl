@@ -3,6 +3,11 @@
  * ------------------------------------------------------------------------------------------ */
 import type { Diagnostic } from 'vscode-languageserver/node';
 import { Position, DiagnosticSeverity } from 'vscode-languageserver/node';
+import path from 'path';
+
+// Note: when running from server/out/, the path resolves to server/src/parser/
+// @ts-expect-error No types
+import TailslideModuleExport from '../src/parser/tailslide.js';
 
 // Lazy-load the WASM module - it will be initialized once
 let errorCollector: { line: number; character: number; message: string; code: string }[] = [];
@@ -17,8 +22,6 @@ export async function initParser(): Promise<void> {
     if (parserModule) return;
 
     // Use require for CommonJS compatibility - parser is in server/src/parser/
-    // Note: when running from server/out/, the path resolves to server/src/parser/
-    const TailslideModuleExport = require('../src/parser/tailslide.js');
 
     // Create a print handler function
     const printHandler = (msg: string) => {
@@ -37,21 +40,21 @@ export async function initParser(): Promise<void> {
     // Determine the exact export format Emscripten used
     if (typeof TailslideModuleExport === 'function') {
         parserModule = await TailslideModuleExport({
-            locateFile: (p: string) => require('path').join(__dirname, '../src/parser', p),
+            locateFile: (p: string) => path.join(__dirname, '../src/parser', p),
             noInitialRun: true,
             print: printHandler,
             printErr: printHandler
         });
     } else if (TailslideModuleExport.default && typeof TailslideModuleExport.default === 'function') {
         parserModule = await TailslideModuleExport.default({
-            locateFile: (p: string) => require('path').join(__dirname, '../src/parser', p),
+            locateFile: (p: string) => path.join(__dirname, '../src/parser', p),
             noInitialRun: true,
             print: printHandler,
             printErr: printHandler
         });
     } else if (TailslideModuleExport.Module && typeof TailslideModuleExport.Module === 'function') {
         parserModule = await TailslideModuleExport.Module({
-            locateFile: (p: string) => require('path').join(__dirname, '../src/parser', p),
+            locateFile: (p: string) => path.join(__dirname, '../src/parser', p),
             noInitialRun: true,
             print: printHandler,
             printErr: printHandler
