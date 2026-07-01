@@ -29,6 +29,8 @@ import {
   InlayHint,
   Position,
   InlayHintKind,
+  Diagnostic,
+  DiagnosticSeverity,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
 import { parse } from 'yaml';
@@ -49,6 +51,7 @@ import getQuoteRanges from './quoteRanges';
 import getCommentedOutSections from './comments';
 import getScopes from './scopes';
 import primParamsStateMachine, { getPrimParamSignature } from './primParamsStateMachine';
+import { initParser, parseLSL } from './parser-wrapper';
 
 const lslDefinitionYaml: LSLDefinitionYaml = parse(fs.readFileSync(`${__dirname}/../../lsl_definitions.yaml`, { encoding: 'utf8' }));
 
@@ -410,6 +413,10 @@ connection.onInitialize((params: InitializeParams) => {
       },
     },
   };
+  result.capabilities.diagnosticProvider = {
+    interFileDependencies: false,
+    workspaceDiagnostics: false,
+  };
   if (hasWorkspaceFolderCapability) {
     result.capabilities.workspace = {
       workspaceFolders: {
@@ -510,6 +517,24 @@ documents.onDidChangeContent((change) => {
 connection.onDidChangeWatchedFiles((_change) => {
   // Monitored files have change in VSCode
   connection.console.log('We received a file change event');
+});
+
+// Diagnostics: Provide errors from the Tailslide parser
+connection.languages.diagnostics.on(async (params) => {
+  const document = documents.get(params.textDocument.uri);
+  if (!document) {
+    return { kind: 'full', items: [] };
+  }
+
+  return {
+    kind: 'full',
+    items: await parseLSL(document.getText())
+  };
+});
+
+// Initialize the parser on server startup
+initParser().catch((err) => {
+  connection.console.error(`Failed to initialize parser: ${err}`);
 });
 
 const getConstantCompletionItems = (array: string[]): CompletionItem[] =>

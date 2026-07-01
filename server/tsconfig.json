@@ -9,6 +9,6 @@
 		"outDir": "out",
 		"rootDir": "src"
 	},
-	"include": ["src", "../gemini-validator.ts"],
+	"include": ["src"],
 	"exclude": ["node_modules", ".vscode-test"]
 }
