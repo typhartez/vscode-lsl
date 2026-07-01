@@ -4,10 +4,18 @@ integer unsetVar;
 integer unusedVar = 6;
 integer unreadVar;
 
-integer incrementedVar = 0;
+integer incrementedVariable = 0;
 
 integer myFunc(integer unusedArg) {
     // TODO
+}
+
+myOtherFunc() {
+    // TODO
+}
+
+string usedFunc() {
+    return "we're no strangers to love";
 }
 
 default {
@@ -15,8 +23,8 @@ default {
         llSay(0, (string)usedVar);
         string scopedUnusedVar = "fire";
 
-        incrementedVar++;
-        incrementedVar+=2;
+        incrementedVariable++;
+        incrementedVariable+=2;
 
         // if (incrementedVar > 0) {
         //
@@ -26,5 +34,7 @@ default {
     touch_start(integer num_detected)
     {
         unreadVar = 7;
+
+        llShout(1, usedFunc());
     }
 }

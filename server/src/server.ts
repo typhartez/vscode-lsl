@@ -2049,8 +2049,20 @@ const checkUnusedUserFunctions = (documentText: string): Diagnostic[] => {
   // Collect all called function names (excluding the definitions themselves)
   const calledFunctions = new Set<string>();
   functionCalls.forEach((call) => {
+    // Only count as called if this function exists in user functions
     if (userFuncs[call.functionName]) {
-      calledFunctions.add(call.functionName);
+      // Check if this call is the function definition itself (same line and adjacent column)
+      const funcDef = userFuncs[call.functionName];
+      if (funcDef && funcDef.line !== undefined && funcDef.column !== undefined) {
+        // Exclude calls that are at the function definition position
+        const isDefinitionCall = call.line === funcDef.line &&
+          Math.abs(call.character - funcDef.column) < call.functionName.length;
+        if (!isDefinitionCall) {
+          calledFunctions.add(call.functionName);
+        }
+      } else {
+        calledFunctions.add(call.functionName);
+      }
     }
   });
 
