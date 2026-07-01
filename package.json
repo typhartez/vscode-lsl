@@ -20,7 +20,7 @@
     "Linden"
   ],
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.125.0"
   },
   "activationEvents": [],
   "main": "./client/out/extension",
