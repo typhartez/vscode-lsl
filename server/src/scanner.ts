@@ -68,7 +68,7 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
           }
         }
 
-        const returnMatch = textBeforeParen.match(/(integer|float|string|key|vector|rotation|quaternion|quarternion|list)\s+/);
+        const returnMatch = textBeforeParen.match(/(integer|float|string|key|vector|rotation|quaternion|quaternion|list)\s+/);
         if (returnMatch) {
           returnType = convertToType(returnMatch[1].trim());
         }
@@ -141,7 +141,7 @@ export const scanDocumentForVariables = (document: string): Variables => {
 
     // determine all defined variables
     const lineVariables = line.match(
-      /(integer|float|key|string|vector|rotation|quarternion|list) +([a-zA-Z_][a-zA-Z0-9_]*)(?=[^(]*?[=;,)])/gm
+      /(integer|float|key|string|vector|rotation|quaternion|list) +([a-zA-Z_][a-zA-Z0-9_]*)(?=[^(]*?[=;,)])/gm
     );
     if (lineVariables?.length) {
       lineVariables.forEach((match) => {

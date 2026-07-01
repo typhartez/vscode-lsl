@@ -844,8 +844,8 @@ connection.onCompletion(
                   character: variable.column,
                 }) &&
                 (variable.type === type ||
-                  (['rotation', 'quarternion'].includes(variable.type) &&
-                    ['rotation', 'quarternion'].includes(type)))
+                  (['rotation', 'quaternion'].includes(variable.type) &&
+                    ['rotation', 'quaternion'].includes(type)))
             )
             .map((variable) => ({
               label: variable.name,
@@ -868,10 +868,10 @@ connection.onCompletion(
             .filter(
               (name) =>
                 (allConstants[name].type === type ||
-                  (['rotation', 'quarternion'].includes(
+                  (['rotation', 'quaternion'].includes(
                     allConstants[name].type
                   ) &&
-                    ['rotation', 'quarternion'].includes(type))) &&
+                    ['rotation', 'quaternion'].includes(type))) &&
                 !smartCompletionItems.find(
                   (existing) => existing.label === name
                 )

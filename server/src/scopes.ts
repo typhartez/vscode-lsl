@@ -123,7 +123,7 @@ const getScopes = (document: string): Scopes => {
               'list ',
               'vector ',
               'rotation ',
-              'quarternion ',
+              'quaternion ',
             ].includes(currentLine)
           ) {
             currentLine = '';

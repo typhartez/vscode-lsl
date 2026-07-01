@@ -14,7 +14,7 @@ export const convertToType = (type: string): LSLType => {
 			return LSLType.Vector;
 		case 'rotation':
 			return LSLType.Rotation;
-		case 'quarternion':
+		case 'quaternion':
 			return LSLType.Rotation;
 		case 'list':
 			return LSLType.List;
