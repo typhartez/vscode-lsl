@@ -22,15 +22,15 @@ default
                 llSay(PUBLIC_CHANNEL, "You rolled a 1.\nOh no! You lost your temp points.");
             } else {
                 tempScore += newRoll;
-                llSay(PUBLIC_CHANNEL, "You rolled a " + (string)newRoll + ". Your temporary score is now " + (string)tempScore);
+                llSay(PUBLIC_CHANNEL, "You rolled a " + newRoll + ". Your temporary score is now " + (string)tempScore);
             }
         } else if (message == "save") {
             fullScore += tempScore;
             tempScore = 0;
             if (fullScore > 100) {
-                llSay(PUBLIC_CHANNEL, "Your score is now " + (string)fullScore + ". You won!");
+                llSay(PUBLIC_CHANNEL, "Your score is now " + fullScore + ". You won!");
             } else {
-                llSay(PUBLIC_CHANNEL, "Your score is now " + (string)fullScore + ".");
+                llSay(PUBLIC_CHANNEL, "Your score is now " + fullScore + ".");
             }
         }
     }

@@ -40,6 +40,7 @@ import type {
   LSLFunction,
   LSLFunctionCall,
 } from './lslTypes';
+import { LSLType } from './lslTypes';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
@@ -1948,6 +1949,158 @@ const checkDefaultState = (documentText: string): Diagnostic[] => {
   return diagnostics;
 };
 
+/**
+ * Checks for type mismatches in function calls - comparing argument types
+ * against expected parameter types.
+ */
+const checkTypeMismatches = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const lines = documentText.split('\n');
+  const commentedOutSections = getCommentedOutSections(documentText);
+
+  // Get all defined variables and user functions
+  const declaredVariables = scanDocumentForVariables(documentText);
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+
+  // Build a map of variable name to type
+  const variableTypes: { [name: string]: LSLType } = {};
+  Object.values(declaredVariables).forEach(v => {
+    variableTypes[v.name] = v.type;
+  });
+
+  // Determine the type of an expression at a given position
+  // This is a simplified version - just checks if it's a variable or literal
+  const getArgumentType = (argText: string): LSLType | null => {
+    const trimmed = argText.trim();
+
+    // Check for string literal
+    if (/^".*"$/.test(trimmed)) return LSLType.String;
+
+    // Check for vector literal (<x, y, z>)
+    if (/^<[^,]+, *[^,]+, *[^,]+>$/.test(trimmed.replace(/\s+/g, ' '))) return LSLType.Vector;
+
+    // Check for rotation literal (<x, y, z, s>)
+    if (/^<[^,]+, *[^,]+, *[^,]+, *[^,]+>$/.test(trimmed.replace(/\s+/g, ' '))) return LSLType.Rotation;
+
+    // Check for integer (decimal, no decimal point)
+    if (/^-?\d+$/.test(trimmed)) return LSLType.Integer;
+
+    // Check for float (has decimal point or exponent)
+    if (/^-?\d+\.\d+$/.test(trimmed) || /^-?\d+(e|E)[+-]?\d+$/.test(trimmed)) return LSLType.Float;
+
+    // Check for key literal (starts with " or UUID-like)
+    if (/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}/.test(trimmed)) return LSLType.Key;
+
+    // Check if it's a known variable
+    if (variableTypes[trimmed]) return variableTypes[trimmed];
+
+    // Check if it's a known constant (all uppercase)
+    if (/^[A-Z][A-Z0-9_]*$/.test(trimmed)) {
+      // Constants have types defined elsewhere, skip for now
+      return null;
+    }
+
+    // Check for list literal ([...]) - we can't easily parse contents
+    if (trimmed.startsWith('[')) return null;
+
+    return null; // Unknown type
+  };
+
+  // Find compatible types (LSL allows some implicit conversions)
+  const isCompatibleType = (actual: LSLType | null, expected: LSLType): boolean => {
+    if (actual === null || actual === LSLType.Unknown) return true; // Unknown, skip
+    if (actual === expected) return true;
+
+    // Integer and float are somewhat interchangeable in LSL
+    if ((actual === LSLType.Integer || actual === LSLType.Float) &&
+        (expected === LSLType.Integer || expected === LSLType.Float)) return true;
+
+    return false;
+  };
+
+  // Scan for function calls and check argument types
+  lines.forEach((line, lineNum) => {
+    const quoteRanges = getQuoteRanges(line);
+    const functionCallMatches = line.matchAll(/[a-zA-Z_][a-zA-Z0-9_]*\s*(?=\()/gm);
+
+    for (const match of functionCallMatches) {
+      const funcColNum = match.index ?? -1;
+      const funcName = match[0].trim();
+
+      if (commentedOutSections.isInSection(lineNum, funcColNum) || quoteRanges.isInRange(funcColNum)) continue;
+
+      // Skip if not a known function
+      const funcDef = allFunctions[funcName] || userFuncs[funcName];
+      if (!funcDef) continue;
+
+      // Find the matching parenthesis and extract arguments
+      const openParenIndex = line.indexOf('(', funcColNum);
+      if (openParenIndex === -1) continue;
+
+      // Simple extraction of arguments (comma-separated within parens)
+      let parenDepth = 0;
+      let argStart = openParenIndex + 1;
+      let argEnd = argStart;
+      let argIndex = 0;
+
+      for (let i = argStart; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '(') parenDepth++;
+        else if (ch === ')') {
+          parenDepth--;
+          if (parenDepth < 0) {
+            argEnd = i;
+            break;
+          }
+        }
+        else if (ch === ',' && parenDepth === 0) {
+          const argText = line.substring(argStart, i).trim();
+          const argType = getArgumentType(argText);
+          const argDef = funcDef.arguments[argIndex];
+
+          if (argDef) {
+            const expectedType = Object.values(argDef)[0].type;
+            if (argType && !isCompatibleType(argType, expectedType as LSLType)) {
+              const startCol = argStart + line.substring(argStart).indexOf(argText.trim());
+              diagnostics.push(Diagnostic.create(
+                { start: { line: lineNum, character: startCol }, end: { line: lineNum, character: startCol + argText.length } },
+                `Type mismatch: expected ${expectedType}, got ${argType}`,
+                DiagnosticSeverity.Error,
+                'lsl'
+              ));
+            }
+          }
+
+          argStart = i + 1;
+          argIndex++;
+        }
+      }
+
+      // Handle last argument
+      if (argIndex < funcDef.arguments.length && argEnd > argStart) {
+        const argText = line.substring(argStart, argEnd).trim();
+        const argType = getArgumentType(argText);
+        const argDef = funcDef.arguments[argIndex];
+
+        if (argDef) {
+          const expectedType = Object.values(argDef)[0].type;
+          if (argType && !isCompatibleType(argType, expectedType as LSLType)) {
+            const startCol = argStart + line.substring(argStart).indexOf(argText.trim());
+            diagnostics.push(Diagnostic.create(
+              { start: { line: lineNum, character: startCol }, end: { line: lineNum, character: startCol + argText.length } },
+              `Type mismatch: expected ${expectedType}, got ${argType}`,
+              DiagnosticSeverity.Error,
+              'lsl'
+            ));
+          }
+        }
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
 // Handle diagnostics request
 connection.languages.diagnostics.on((params) => {
   const document = documents.get(params.textDocument.uri);
@@ -1965,6 +2118,10 @@ connection.languages.diagnostics.on((params) => {
     // Check for missing/multiple default states
     const defaultStateDiagnostics = checkDefaultState(document.getText());
     allDiagnostics.push(...defaultStateDiagnostics);
+
+    // Check for type mismatches
+    const typeMismatchDiagnostics = checkTypeMismatches(document.getText());
+    allDiagnostics.push(...typeMismatchDiagnostics);
   } catch (e) {
     connection.console.error(`Error computing diagnostics: ${e}`);
   }
