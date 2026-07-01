@@ -1061,6 +1061,7 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
       );
     });
     if (allFunctions[word]) {
+      hoverContent.push(`Energy: ${lslFunction.energy.toFixed(1)} - Forced delay: ${lslFunction.sleep.toFixed(1)}s`);
       hoverContent.push(`@see - https://wiki.secondlife.com/wiki/${word}`);
     }
     return { contents: hoverContent };
