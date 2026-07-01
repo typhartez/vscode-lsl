@@ -4,7 +4,7 @@
   "description": "Advanced support of LSL (Linden Scripting Language) in Visual Studio Code",
   "author": "jyaoma",
   "license": "MIT",
-  "version": "2.4.1",
+  "version": "3.0.0",
   "icon": "./icons/lsl.png",
   "publisher": "jyaoma",
   "repository": {
@@ -20,7 +20,7 @@
     "Linden"
   ],
   "engines": {
-    "vscode": "^1.75.0"
+    "vscode": "^1.125.0"
   },
   "activationEvents": [],
   "main": "./client/out/extension",
@@ -91,6 +91,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.6",
     "@types/node": "^18.14.6",
+    "@types/vscode": "^1.125.0",
     "@typescript-eslint/eslint-plugin": "^7.1.0",
     "@typescript-eslint/parser": "^7.1.0",
     "eslint": "^8.57.0",
