@@ -39,6 +39,16 @@ suite('Should get diagnostics', () => {
 			{ message: "Unused function 'myOtherFunc'", range: toRange(12, 0, 12, 10), severity: vscode.DiagnosticSeverity.Hint, source: 'lsl' },
 		]);
 	});
+
+	test('Detects missing semicolons', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'missing-semi.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: 'Missing semicolon', range: toRange(4, 26, 4, 26), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }, // llSay in state_entry
+			{ message: 'Missing semicolon', range: toRange(5, 13, 5, 13), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }, // integer i = 5
+			{ message: 'Missing semicolon', range: toRange(6, 21, 6, 21), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }, // llOwnerSay
+			{ message: 'Missing semicolon', range: toRange(11, 20, 11, 20), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }, // llSay in touch_start
+		]);
+	});
 });
 
 function toRange(sLine: number, sChar: number, eLine: number, eChar: number) {

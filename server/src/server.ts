@@ -2118,6 +2118,169 @@ const checkUnusedUserFunctions = (documentText: string): Diagnostic[] => {
 };
 
 /**
+ * Checks for missing semicolons at the end of statements.
+ */
+const checkMissingSemicolons = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const lines = documentText.split('\n');
+  const commentedOutSections = getCommentedOutSections(documentText);
+
+  // Keywords that should NOT be followed by semicolons (control flow statements)
+  const controlFlowKeywords = ['if', 'else', 'for', 'while', 'do', 'switch', 'case'];
+
+  lines.forEach((line, lineNum) => {
+    // Skip empty lines and lines with only whitespace
+    const trimmedLine = line.trim();
+    if (!trimmedLine) return;
+
+    // Skip comment lines
+    if (trimmedLine.startsWith('//') || trimmedLine.startsWith('/*')) return;
+
+    // Skip preprocessor lines
+    if (trimmedLine.startsWith('#')) return;
+
+    // Skip lines that are just curly braces or whitespace + curly braces
+    const curliesOnlyMatch = trimmedLine.match(/^[{}]+\s*$/);
+    if (curliesOnlyMatch) return;
+
+    // Find the actual code portion (excluding trailing comments)
+    let codeEndIndex = line.length;
+    let commentIndex = line.length;
+    for (let i = 0; i < line.length - 1; i++) {
+      if (line[i] === '/' && line[i + 1] === '/') {
+        commentIndex = i;
+        break;
+      }
+    }
+    if (commentIndex < line.length) {
+      // Check if the comment start is inside a string
+      let inString = false;
+      for (let i = 0; i < commentIndex; i++) {
+        const ch = line[i];
+        if (ch === '"') inString = !inString;
+      }
+      if (!inString) {
+        codeEndIndex = commentIndex;
+      }
+    }
+
+    const codePart = line.substring(0, codeEndIndex);
+
+    // Skip if the line ends with semicolon (correct)
+    if (codePart.trimEnd().endsWith(';')) return;
+
+    // Skip if the line ends with a colon (function declaration, case, label, etc.)
+    if (codePart.trimEnd().endsWith(':')) return;
+
+    // Skip lines that start with control flow keywords (they have their own termination rules)
+    const firstWordMatch = trimmedLine.match(/^[a-z_][a-zA-Z0-9_]*/i);
+    const firstWord = firstWordMatch ? firstWordMatch[0].toLowerCase() : '';
+    if (controlFlowKeywords.includes(firstWord)) return;
+
+    // Track parentheses and brackets to find actual statement end
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let inString = false;
+
+    for (let i = 0; i < codePart.length; i++) {
+      // Skip if we're in a comment
+      if (commentedOutSections.isInSection(lineNum, i)) continue;
+
+      // Handle string literals
+      const ch = codePart[i];
+      if (ch === '"' && (i === 0 || codePart[i - 1] !== '\\')) {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+
+      if (ch === '(') parenDepth++;
+      else if (ch === ')') parenDepth--;
+      else if (ch === '[') bracketDepth++;
+      else if (ch === ']') bracketDepth--;
+      else if (ch === ';') {
+        // Found a semicolon - this line has proper termination
+        return;
+      }
+    }
+
+    // If we have unclosed parens, the statement continues to next line - skip
+    if (parenDepth > 0 || bracketDepth > 0) return;
+
+    // Check if the code part ends with a closing parenthesis (end of function call or cast)
+    const trimmedCodeEnd = codePart.trimEnd();
+    const lastSignificantChar = trimmedCodeEnd[trimmedCodeEnd.length - 1];
+
+    // Check if this line or the next line contains an opening brace (function/event declaration)
+    // Function declarations have the signature on one line and { on the next
+    // But we only want to skip if this line is a function signature (ends with ))
+    if (codePart.includes('{')) return;
+    // Skip if this looks like a function/event declaration (next line starts with {)
+    // and this line ends with ) without assignment
+    const nextLine = lineNum + 1 < lines.length ? lines[lineNum + 1].trim() : '';
+    if (nextLine.startsWith('{') && lastSignificantChar === ')') return;
+
+    // If we end with ), check if it's a function call or cast
+    if (lastSignificantChar === ')') {
+      // This looks like a function call or cast ending - needs semicolon if it doesn't have one
+      diagnostics.push(
+        Diagnostic.create(
+          { start: { line: lineNum, character: trimmedCodeEnd.length }, end: { line: lineNum, character: trimmedCodeEnd.length } },
+          'Missing semicolon',
+          DiagnosticSeverity.Error,
+          'lsl'
+        )
+      );
+    }
+    // Check if ends with ] (list literal)
+    else if (lastSignificantChar === ']') {
+      diagnostics.push(
+        Diagnostic.create(
+          { start: { line: lineNum, character: trimmedCodeEnd.length }, end: { line: lineNum, character: trimmedCodeEnd.length } },
+          'Missing semicolon',
+          DiagnosticSeverity.Error,
+          'lsl'
+        )
+      );
+    }
+    // Check if ends with identifier or string (variable declaration, assignment, etc.)
+    else if (/[a-zA-Z_]/.test(lastSignificantChar) || lastSignificantChar === '"') {
+      // Check if it looks like a statement that needs semicolon
+      // Patterns: "integer x", "x = value" (standalone variable with assignment), "x" (undeclared variable usage should not trigger this)
+      // Only flag if it starts with a type keyword (variable declaration) or has an assignment
+      const looksLikeStatement = /^(integer|float|string|key|list|vector|rotation|quaternion)\s+[a-zA-Z_]/.test(trimmedCodeEnd);
+      if (looksLikeStatement) {
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line: lineNum, character: trimmedCodeEnd.length }, end: { line: lineNum, character: trimmedCodeEnd.length } },
+            'Missing semicolon',
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    }
+    // Check if ends with a digit (literal number) - this includes cases like "integer i = 5" or "i = 5"
+    else if (/\d/.test(lastSignificantChar)) {
+      // Could be variable initialization like "integer i = 5" or "i = 5"
+      // Check if there's an assignment operator before the number
+      if (/\s=\s*\d+$/.test(trimmedCodeEnd) || /=\s*\d+$/.test(trimmedCodeEnd)) {
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line: lineNum, character: trimmedCodeEnd.length }, end: { line: lineNum, character: trimmedCodeEnd.length } },
+            'Missing semicolon',
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
+/**
  * Checks for type mismatches in function calls - comparing argument types
  * against expected parameter types.
  */
@@ -2299,6 +2462,10 @@ connection.languages.diagnostics.on((params) => {
     // Check for type mismatches
     const typeMismatchDiagnostics = checkTypeMismatches(document.getText());
     allDiagnostics.push(...typeMismatchDiagnostics);
+
+    // Check for missing semicolons
+    const missingSemiDiagnostics = checkMissingSemicolons(document.getText());
+    allDiagnostics.push(...missingSemiDiagnostics);
 
     // Check for unused user-defined functions
     const unusedUserFuncDiagnostics = checkUnusedUserFunctions(document.getText());
