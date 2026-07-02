@@ -1981,10 +1981,33 @@ const checkDefaultState = (documentText: string): Diagnostic[] => {
 const checkUnusedVariables = (documentText: string): Diagnostic[] => {
   const diagnostics: Diagnostic[] = [];
   const declaredVariables = scanDocumentForVariables(documentText);
+  const lines = documentText.split('\n');
 
   Object.values(declaredVariables).forEach((variable) => {
+    // Skip parameters - they are part of function/event signatures and intentionally may be unused
+    if (variable.isParameter) {
+      return;
+    }
+
+    // Check if a reference is a post-increment/decrement (read then write)
+    // e.g., "trip--" reads the value before decrementing
+    const isPostIncrementOrDecrement = (ref: { line: number; character: number }): boolean => {
+      const line = lines[ref.line];
+      // Get the text after the variable name
+      const afterVar = line.slice(ref.character + variable.name.length).trimStart();
+      // Check for ++ or -- after the variable name (post-increment/decrement)
+      // e.g., "trip --" -> afterVar = "--..."
+      return /^(\+\+|--)/.test(afterVar);
+    };
+
     // Check if there are any read references
-    const hasReadReferences = variable.references.some((ref) => !ref.isWrite);
+    // Post-increment/decrement (x++) counts as a read since the value is used before modification
+    const hasReadReferences = variable.references.some((ref) => {
+      if (!ref.isWrite) return true;
+      // Post-increment/decrement counts as a read
+      if (isPostIncrementOrDecrement(ref)) return true;
+      return false;
+    });
 
     // No read references - check if variable is set but never used
     if (hasReadReferences) {
@@ -1992,13 +2015,13 @@ const checkUnusedVariables = (documentText: string): Diagnostic[] => {
     }
 
     // Check if the declaration has an initial value (e.g., "integer x = 5;")
-    const lines = documentText.split('\n');
     const declarationLine = lines[variable.line] || '';
     const hasInitialValue = /=[^=]/.test(declarationLine.substring(variable.column));
 
     // Check if there are any write references on separate lines (e.g., "myVar = 3;")
+    // But exclude post-increment/decrement since they involve reading
     const hasSeparateWrite = variable.references.some(
-      (ref) => ref.isWrite && ref.line !== variable.line
+      (ref) => ref.isWrite && ref.line !== variable.line && !isPostIncrementOrDecrement(ref)
     );
 
     if (hasSeparateWrite) {
@@ -2015,7 +2038,7 @@ const checkUnusedVariables = (documentText: string): Diagnostic[] => {
         )
       );
     } else {
-      // No separate assignments - hint (faded out)
+      // No separate assignments or only post-increment/decrement operations - hint (faded out)
       // This covers both inline init and declared-but-never-touched cases
       const unnecessaryDiagnostic = Diagnostic.create(
           {

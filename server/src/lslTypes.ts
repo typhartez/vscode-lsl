@@ -72,6 +72,7 @@ export type LSLVariable = {
   column: number;
   columnWithType: number;
   references: LSLReference[];
+  isParameter?: boolean;
 };
 
 export type LSLFunctionCall = Position & {

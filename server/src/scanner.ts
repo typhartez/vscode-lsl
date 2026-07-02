@@ -173,6 +173,24 @@ export const scanDocumentForVariables = (document: string): Variables => {
         while (trimmedMatch.includes('  '))
           trimmedMatch = trimmedMatch.replace('  ', ' ');
         const [type, name] = trimmedMatch.split(' ');
+
+        // Check if this variable is a function/event parameter
+        // by looking at the scope that contains this line
+        let currentScope = null;
+        for (let i = allScopes.scopes.length - 1; i >= 0; i--) {
+          const scope = allScopes.scopes[i];
+          if (scope.startLine <= lineNum &&
+              (scope.endLine === undefined || lineNum <= scope.endLine) &&
+              scope.name) {
+            currentScope = scope;
+            break;
+          }
+        }
+        // Check if this line has a function/event declaration signature
+        // Function/event names are lowercase and followed by parentheses
+        const funcNameMatch = trimmedLine.match(/^[a-z_][a-zA-Z0-9_]*\s*\([^)]*\)/);
+        const isParameter = currentScope?.name !== undefined && !!funcNameMatch;
+
         allVariables[`${name}:${lineNum}`] = {
           name,
           type: convertToType(type),
@@ -182,6 +200,7 @@ export const scanDocumentForVariables = (document: string): Variables => {
             line.slice(colNum).search(new RegExp(`\\b${name}\\b`, 'gm')) +
             colNum,
           references: [],
+          isParameter,
         };
       });
     }
