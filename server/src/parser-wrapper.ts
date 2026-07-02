@@ -97,7 +97,9 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
     }
 
     // Convert to LSP diagnostics
+    // Ignore E20009 (missing semicolon) - we handle that with our own check
     for (const error of errorCollector) {
+        if (error.code === 'E20009') continue;
         diagnostics.push({
             severity: DiagnosticSeverity.Error,
             range: {
