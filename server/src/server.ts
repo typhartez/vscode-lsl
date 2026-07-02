@@ -31,6 +31,7 @@ import {
   InlayHintKind,
   Diagnostic,
   DiagnosticSeverity,
+  DiagnosticTag,
 } from 'vscode-languageserver/node';
 import fs from 'fs';
 import { parse } from 'yaml';
@@ -1962,6 +1963,150 @@ const checkMissingSemicolons = (documentText: string): Diagnostic[] => {
   return diagnostics;
 };
 
+/**
+ * Checks for unused variables - variables that have no read references.
+ * Returns diagnostics: Hint severity for variables with inline initialization only,
+ * Warning severity for variables assigned in separate statements.
+ */
+const checkUnusedVariables = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const declaredVariables = scanDocumentForVariables(documentText);
+  const lines = documentText.split('\n');
+
+  Object.values(declaredVariables).forEach((variable) => {
+    // Skip parameters - they are part of function/event signatures and intentionally may be unused
+    if (variable.isParameter) {
+      return;
+    }
+
+    // Check if a reference is a post-increment/decrement (read then write)
+    // e.g., "trip--" reads the value before decrementing
+    const isPostIncrementOrDecrement = (ref: { line: number; character: number }): boolean => {
+      const line = lines[ref.line];
+      // Get the text after the variable name
+      const afterVar = line.slice(ref.character + variable.name.length).trimStart();
+      // Check for ++ or -- after the variable name (post-increment/decrement)
+      // e.g., "trip --" -> afterVar = "--..."
+      return /^(\+\+|--)/.test(afterVar);
+    };
+
+    // Check if there are any read references
+    // Post-increment/decrement (x++) counts as a read since the value is used before modification
+    const hasReadReferences = variable.references.some((ref) => {
+      if (!ref.isWrite) return true;
+      // Post-increment/decrement counts as a read
+      if (isPostIncrementOrDecrement(ref)) return true;
+      return false;
+    });
+
+    // No read references - check if variable is set but never used
+    if (hasReadReferences) {
+      return;
+    }
+
+    // Check if the declaration has an initial value (e.g., "integer x = 5;")
+    const declarationLine = lines[variable.line] || '';
+    const hasInitialValue = /=[^=]/.test(declarationLine.substring(variable.column));
+
+    // Check if there are any write references on separate lines (e.g., "myVar = 3;")
+    // But exclude post-increment/decrement since they involve reading
+    const hasSeparateWrite = variable.references.some(
+      (ref) => ref.isWrite && ref.line !== variable.line && !isPostIncrementOrDecrement(ref)
+    );
+
+    if (hasSeparateWrite) {
+      // Assigned in separate statements - warning (yellow squiggly)
+      diagnostics.push(
+        Diagnostic.create(
+          {
+            start: { line: variable.line, character: variable.column },
+            end: { line: variable.line, character: variable.column + variable.name.length },
+          },
+          `Variable '${variable.name}' is set but never read`,
+          DiagnosticSeverity.Warning,
+          'lsl'
+        )
+      );
+    } else {
+      // No separate assignments or only post-increment/decrement operations - hint (faded out)
+      // This covers both inline init and declared-but-never-touched cases
+      const unnecessaryDiagnostic = Diagnostic.create(
+          {
+            start: { line: variable.line, character: variable.column },
+            end: { line: variable.line, character: variable.column + variable.name.length },
+          },
+          hasInitialValue
+            ? `Unused variable '${variable.name}'`
+            : `Variable '${variable.name}' is declared but never used`,
+          DiagnosticSeverity.Hint,
+          'lsl'
+        );
+      unnecessaryDiagnostic.tags = [DiagnosticTag.Unnecessary];
+      diagnostics.push(
+        unnecessaryDiagnostic
+      );
+    }
+  });
+
+  return diagnostics;
+};
+
+/**
+ * Checks for unused user-defined functions - functions that are defined but never called.
+ */
+const checkUnusedUserFunctions = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+  const functionCalls = scanDocumentForFunctionCalls(documentText);
+
+  // Collect all called function names (excluding the definitions themselves)
+  const calledFunctions = new Set<string>();
+  functionCalls.forEach((call) => {
+    // Only count as called if this function exists in user functions
+    if (userFuncs[call.functionName]) {
+      // Check if this call is the function definition itself (same line and adjacent column)
+      const funcDef = userFuncs[call.functionName];
+      if (funcDef && funcDef.line !== undefined && funcDef.column !== undefined) {
+        // Exclude calls that are at the function definition position
+        const isDefinitionCall = call.line === funcDef.line &&
+          Math.abs(call.character - funcDef.column) < call.functionName.length;
+        if (!isDefinitionCall) {
+          calledFunctions.add(call.functionName);
+        }
+      } else {
+        calledFunctions.add(call.functionName);
+      }
+    }
+  });
+
+  // Check each user-defined function
+  Object.entries(userFuncs).forEach(([funcName, func]) => {
+    // Skip deprecated functions - they may intentionally be unused
+    if (func.deprecated) {
+      return;
+    }
+
+    // If the function is defined but never called, flag it
+    if (!calledFunctions.has(funcName)) {
+      if (func.line !== undefined) {
+        const unnecessaryDiagnostic = Diagnostic.create(
+          {
+            start: { line: func.line, character: func.column || 0 },
+            end: { line: func.line, character: (func.column || 0) + funcName.length },
+          },
+          `Unused function '${funcName}'`,
+          DiagnosticSeverity.Hint,
+          'lsl'
+        );
+        unnecessaryDiagnostic.tags = [DiagnosticTag.Unnecessary];
+        diagnostics.push(unnecessaryDiagnostic);
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
 // Handle diagnostics request
 connection.languages.diagnostics.on(async (params) => {
   const document = documents.get(params.textDocument.uri);
@@ -1971,12 +2116,16 @@ connection.languages.diagnostics.on(async (params) => {
 
   // Get errors from Tailslide parser
   const tailslideDiagnostics = await parseLSL(document.getText());
+  
+  // Check for unused variables
+  const unusedDiagnostics = checkUnusedVariables(document.getText());
 
   // Add missing semicolon diagnostics (custom check since Tailslide may not detect these)
   const missingSemiDiagnostics = checkMissingSemicolons(document.getText());
 
   const allDiagnostics: Diagnostic[] = [
     ...tailslideDiagnostics,
+    ...unusedDiagnostics,
     ...missingSemiDiagnostics
   ];
 
