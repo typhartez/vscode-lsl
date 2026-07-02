@@ -2120,12 +2120,16 @@ connection.languages.diagnostics.on(async (params) => {
   // Check for unused variables
   const unusedDiagnostics = checkUnusedVariables(document.getText());
 
+  // Check for unused functions
+  const unusedFunctionsDiagnostics = checkUnusedUserFunctions(document.getText());
+
   // Add missing semicolon diagnostics (custom check since Tailslide may not detect these)
   const missingSemiDiagnostics = checkMissingSemicolons(document.getText());
 
   const allDiagnostics: Diagnostic[] = [
     ...tailslideDiagnostics,
     ...unusedDiagnostics,
+    ...unusedFunctionsDiagnostics,
     ...missingSemiDiagnostics
   ];
 
