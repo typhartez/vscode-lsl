@@ -9,6 +9,13 @@ import * as path from 'path';
 import { activate } from './helper';
 
 suite('Should get diagnostics', () => {
+	test('Detects undeclared variables', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'diagnostics.lsl'));
+		await testDiagnostics(docUri, [
+			{ message: "Undeclared variable 'undefinedVar'", range: toRange(5, 13, 5, 25), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }
+		]);
+	});
+	
 	test('Detects missing semicolons', async () => {
 		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'missing-semi.lsl'));
 		await testDiagnostics(docUri, [

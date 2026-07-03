@@ -1964,6 +1964,112 @@ const checkMissingSemicolons = (documentText: string): Diagnostic[] => {
 };
 
 /**
+ * Scans a document for all potential identifier references that could be undeclared variables.
+ * Returns positions where identifiers are used but not declared in scope.
+ */
+const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
+  const diagnostics: Diagnostic[] = [];
+  const lines = documentText.split('\n');
+  const allScopes = getScopes(documentText);
+  const commentedOutSections = getCommentedOutSections(documentText);
+
+  // Always scan fresh for variables to ensure we have up-to-date data
+  const declaredVariables = scanDocumentForVariables(documentText);
+  const userFuncs = scanDocumentForUserFunctions(documentText);
+
+  // Collect all known valid names (functions, events, constants, keywords)
+  const knownNames = new Set<string>();
+  Object.keys(userFuncs).forEach(name => knownNames.add(name));
+  Object.keys(allFunctions).forEach(name => knownNames.add(name));
+  Object.keys(allEvents).forEach(name => knownNames.add(name));
+  Object.keys(allConstants).forEach(name => knownNames.add(name));
+  const keywords = [
+    'default', 'state', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
+    'integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion',
+    'return', 'jump', 'break', 'continue', 'TRUE', 'FALSE'
+  ];
+  keywords.forEach(kw => knownNames.add(kw));
+
+  // First, collect all #define names from the document to add them to known names
+  // This handles identifiers defined via preprocessor
+  lines.forEach((line) => {
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('#define')) {
+      const afterDefine = trimmedLine.substring(7).trim();
+      const defineNameMatch = afterDefine.match(/([a-zA-Z_][a-zA-Z0-9_]*)/);
+      if (defineNameMatch) {
+        knownNames.add(defineNameMatch[1]);
+      }
+    }
+  });
+
+  // Scan each line for undeclared variable references
+  lines.forEach((line, lineNum) => {
+    // Skip processing on #define lines - all identifiers on these lines are either
+    // the defined name or values/references used to define them
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('#define')) {
+      return; // Skip this line
+    }
+
+    const quoteRanges = getQuoteRanges(line);
+
+    // Find all identifier references in this line
+    const identifierMatches = line.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/gm);
+
+    for (const match of identifierMatches) {
+      const colNum = match.index ?? -1;
+      const word = match[1];
+
+      // Skip if no match or in comments/strings
+      if (colNum === -1) continue;
+      if (commentedOutSections.isInSection(lineNum, colNum)) continue;
+      if (quoteRanges.isInRange(colNum)) continue;
+
+      // Skip if it's a known function/event/constant/keyword
+      if (knownNames.has(word)) continue;
+
+      // Skip if preceded immediately by a type keyword (variable declaration)
+      // The text immediately before this identifier should end with a type keyword followed by optional whitespace
+      const beforeText = line.substring(0, colNum).trimEnd();
+      if (/^(integer|float|string|key|list|vector|rotation|quaternion)$/i.test(beforeText)) continue;
+
+      // Skip if preceded by a type keyword (handles "integer myVar")
+      const justBeforeMatch = line.substring(0, colNum);
+      const lastWordBefore = justBeforeMatch.match(/\b[a-zA-Z_][a-zA-Z0-9_]*\s*$/);
+      const typeKeywords = ['integer', 'float', 'string', 'key', 'list', 'vector', 'rotation', 'quaternion'];
+      if (lastWordBefore && typeKeywords.includes(lastWordBefore[0].trim().toLowerCase())) continue;
+
+      // Skip if preceded by 'state' keyword (state declaration like "state custom {")
+      if (/\bstate\s*$/i.test(justBeforeMatch.trimEnd())) continue;
+
+      // Check if this variable is declared and in scope
+      const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
+        variable.name === word &&
+        allScopes.isInScope(
+          { line: lineNum, character: colNum },
+          { line: variable.line, character: variable.column }
+        )
+      );
+
+      // If not declared or not in scope, flag it as undeclared
+      if (!isDeclaredAndInScope) {
+        diagnostics.push(
+          Diagnostic.create(
+            { start: { line: lineNum, character: colNum }, end: { line: lineNum, character: colNum + word.length } },
+            `Undeclared variable '${word}'`,
+            DiagnosticSeverity.Error,
+            'lsl'
+          )
+        );
+      }
+    }
+  });
+
+  return diagnostics;
+};
+
+/**
  * Checks for unused variables - variables that have no read references.
  * Returns diagnostics: Hint severity for variables with inline initialization only,
  * Warning severity for variables assigned in separate statements.
@@ -2117,6 +2223,9 @@ connection.languages.diagnostics.on(async (params) => {
   // Get errors from Tailslide parser
   const tailslideDiagnostics = await parseLSL(document.getText());
   
+  // Check for undeclared variables
+  const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText());
+  
   // Check for unused variables
   const unusedDiagnostics = checkUnusedVariables(document.getText());
 
@@ -2128,6 +2237,7 @@ connection.languages.diagnostics.on(async (params) => {
 
   const allDiagnostics: Diagnostic[] = [
     ...tailslideDiagnostics,
+    ...undeclaredDiagnostics,
     ...unusedDiagnostics,
     ...unusedFunctionsDiagnostics,
     ...missingSemiDiagnostics

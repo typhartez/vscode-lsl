@@ -34,4 +34,14 @@ default
             }
         }
     }
+
+    link_message(integer sender_num, integer num, string str, key id)
+    {
+        llRequestPermissions(NULL_KEY, PERMISSION_TRIGGER_ANIMATION);
+    }
+
+    run_time_permissions(integer perm)
+    {
+        llStartAnimation(str);
+    }
 }
