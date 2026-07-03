@@ -2043,6 +2043,9 @@ const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
       // Skip if preceded by 'state' keyword (state declaration like "state custom {")
       if (/\bstate\s*$/i.test(justBeforeMatch.trimEnd())) continue;
 
+      // Skip vector/rotation properties (.x, .y, .z, .s)
+      if (['x', 'y', 'z', 's'].includes(word) && justBeforeMatch.trimEnd().endsWith('.')) continue;
+
       // Check if this variable is declared and in scope
       const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
         variable.name === word &&
