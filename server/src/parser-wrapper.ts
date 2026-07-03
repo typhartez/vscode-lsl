@@ -97,19 +97,32 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
     }
 
     // Convert to LSP diagnostics
-    // Ignore E20009 (missing semicolon) - we handle that with our own check
+    // Ignore E20009
     for (const error of errorCollector) {
         if (error.code === 'E20009') continue;
-        diagnostics.push({
-            severity: DiagnosticSeverity.Error,
-            range: {
-                start: Position.create(error.startLine, error.startCharacter),
-                end: Position.create(error.endLine, error.endCharacter)
-            },
-            message: error.message,
-            code: error.code,
-            source: 'vscode-lsl'
-        });
+        if (['E20007'].includes(error.code)) {
+            diagnostics.push({
+                severity: DiagnosticSeverity.Warning,
+                range: {
+                    start: Position.create(error.startLine, error.startCharacter),
+                    end: Position.create(error.endLine, error.endCharacter)
+                },
+                message: error.message,
+                code: error.code,
+                source: 'vscode-lsl'
+            });
+        } else {
+            diagnostics.push({
+                severity: DiagnosticSeverity.Error,
+                range: {
+                    start: Position.create(error.startLine, error.startCharacter),
+                    end: Position.create(error.endLine, error.endCharacter)
+                },
+                message: error.message,
+                code: error.code,
+                source: 'vscode-lsl'
+            });
+        }
     }
 
     return diagnostics;
