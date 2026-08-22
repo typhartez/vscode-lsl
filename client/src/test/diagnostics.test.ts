@@ -25,6 +25,11 @@ suite('Should get diagnostics', () => {
 			{ message: 'Missing semicolon', range: toRange(11, 20, 11, 20), severity: vscode.DiagnosticSeverity.Error, source: 'lsl' }, // llSay in touch_start
 		]);
 	});
+
+	test('Accepts empty lines after default / state without unused function warnings', async () => {
+		const docUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'empty-line-after-state.lsl'));
+		await testDiagnostics(docUri, []);
+	});
 });
 
 function toRange(sLine: number, sChar: number, eLine: number, eChar: number) {
