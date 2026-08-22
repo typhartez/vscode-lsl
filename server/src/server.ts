@@ -2236,14 +2236,14 @@ connection.languages.diagnostics.on(async (params) => {
   const unusedFunctionsDiagnostics = checkUnusedUserFunctions(document.getText());
 
   // Add missing semicolon diagnostics (custom check since Tailslide may not detect these)
-  const missingSemiDiagnostics = checkMissingSemicolons(document.getText());
+  // const missingSemiDiagnostics = checkMissingSemicolons(document.getText());
 
   const allDiagnostics: Diagnostic[] = [
     ...tailslideDiagnostics,
     ...undeclaredDiagnostics,
     ...unusedDiagnostics,
     ...unusedFunctionsDiagnostics,
-    ...missingSemiDiagnostics
+    // ...missingSemiDiagnostics
   ];
 
   return {
