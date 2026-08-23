@@ -40,6 +40,7 @@ import type {
   LSLFunction,
   LSLFunctionCall,
 } from './lslTypes';
+import { LSLType } from './lslTypes';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import {
@@ -2003,13 +2004,26 @@ const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
     }
   });
 
+  // Track whether we are inside a multi-line #define continuation block
+  let inPreprocessorContinuation = false;
+
   // Scan each line for undeclared variable references
   lines.forEach((line, lineNum) => {
-    // Skip processing on #define lines - all identifiers on these lines are either
-    // the defined name or values/references used to define them
+    // Skip all preprocessor directive lines and their multi-line continuations.
+    // All identifiers on these lines are either directive keywords, the defined name,
+    // or values/expressions used by the preprocessor — not regular LSL code.
     const trimmedLine = line.trim();
-    if (trimmedLine.startsWith('#define')) {
-      return; // Skip this line
+    if (inPreprocessorContinuation) {
+      if (!line.trimEnd().endsWith('\\')) {
+        inPreprocessorContinuation = false;
+      }
+      return; // Skip this continuation line
+    }
+    if (/^#(define|include|if|ifdef|ifndef|elif|else|endif|undef|pragma|warning|error)\b/.test(trimmedLine)) {
+      if (line.trimEnd().endsWith('\\')) {
+        inPreprocessorContinuation = true;
+      }
+      return; // Skip this preprocessor directive line
     }
 
     const quoteRanges = getQuoteRanges(line);
@@ -2085,6 +2099,12 @@ const checkUnusedVariables = (documentText: string): Diagnostic[] => {
   Object.values(declaredVariables).forEach((variable) => {
     // Skip parameters - they are part of function/event signatures and intentionally may be unused
     if (variable.isParameter) {
+      return;
+    }
+
+    // Skip preprocessor #define names (LSLType.Unknown) — these are macros, not regular
+    // variables, and their usage can't be reliably tracked by the scanner.
+    if (variable.type === LSLType.Unknown) {
       return;
     }
 

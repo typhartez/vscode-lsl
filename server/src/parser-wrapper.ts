@@ -68,6 +68,36 @@ export async function initParser(): Promise<void> {
 }
 
 /**
+ * Replaces preprocessor directive lines with empty lines so the Tailslide parser
+ * (which does not understand Firestorm/LSL preprocessor syntax) won't error on them.
+ * Line numbers are preserved so diagnostic positions stay accurate.
+ */
+function stripPreprocessorDirectives(text: string): string {
+    const preprocessorLineRe = /^\s*#(define|include|if|ifdef|ifndef|elif|else|endif|undef|pragma|warning|error)\b/;
+    const lines = text.split('\n');
+    let inMultiLineDefine = false;
+    const result = lines.map(line => {
+        // A multi-line #define continuation ends when the line does NOT end with backslash
+        const trimmed = line.trimEnd();
+        if (inMultiLineDefine) {
+            if (!trimmed.endsWith('\\')) {
+                inMultiLineDefine = false;
+            }
+            return '';
+        }
+        if (preprocessorLineRe.test(line)) {
+            // If this line ends with backslash it continues onto the next line(s)
+            if (trimmed.endsWith('\\')) {
+                inMultiLineDefine = true;
+            }
+            return '';
+        }
+        return line;
+    });
+    return result.join('\n');
+}
+
+/**
  * Parse LSL code and return diagnostics
  */
 export async function parseLSL(text: string): Promise<Diagnostic[]> {
@@ -85,8 +115,12 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
     const diagnostics: Diagnostic[] = [];
 
     try {
+        // Strip preprocessor directive lines before parsing — Tailslide does not understand
+        // Firestorm/LSL preprocessor directives (#define, #include, #if, etc.).
+        // Replace them with empty lines to preserve line numbers for accurate diagnostics.
+        const strippedText = stripPreprocessorDirectives(text);
         // Write content to Emscripten virtual filesystem
-        parserModule.FS.writeFile('/diagnostic.lsl', text);
+        parserModule.FS.writeFile('/diagnostic.lsl', strippedText);
         parserModule.callMain(['diagnostic.lsl']);
     } catch (e: unknown) {
         // ExitStatus exceptions are expected for normal parser exit
