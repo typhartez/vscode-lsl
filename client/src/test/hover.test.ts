@@ -10,11 +10,11 @@ suite('Should get hover information', () => {
 		await activate(docUri);
 
 		// Line 229 (0-based 228): llMessageLinked(sendTo, reason, (string)col, IDENTIFIER);
-		// IDENTIFIER is at col 46
+		// IDENTIFIER is at col 49
 		const hovers = (await vscode.commands.executeCommand(
 			'vscode.executeHoverProvider',
 			docUri,
-			new vscode.Position(228, 48)
+			new vscode.Position(228, 50)
 		)) as vscode.Hover[];
 
 		assert.ok(hovers && hovers.length > 0, 'Hover should be returned for IDENTIFIER');

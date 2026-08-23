@@ -512,10 +512,12 @@ documents.onDidChangeContent((change) => {
   try {
     getCommentedOutSections(change.document.getText());
     allVariables[change.document.uri] = scanDocumentForVariables(
-      change.document.getText()
+      change.document.getText(),
+      change.document.uri
     );
     allUserFunctions[change.document.uri] = scanDocumentForUserFunctions(
-      change.document.getText()
+      change.document.getText(),
+      change.document.uri
     );
   } catch (e) {
     console.error('Error processing document change:', e);
@@ -598,59 +600,23 @@ connection.onCompletion(
               ...getConstantCompletionItems([
                 'ATTACH_HEAD',
                 'ATTACH_NOSE',
-                'ATTACH_MOUTH',
-                'ATTACH_FACE_TONGUE',
-                'ATTACH_CHIN',
+                'ATTACH_L_EAR',
+                'ATTACH_R_EAR',
+                'ATTACH_BEARD',
+                'ATTACH_LEFT_EYE',
+                'ATTACH_RIGHT_EYE',
+                'ATTACH_L_HAND',
+                'ATTACH_R_HAND',
                 'ATTACH_FACE_JAW',
-                'ATTACH_LEAR',
-                'ATTACH_REAR',
-                'ATTACH_FACE_LEAR',
-                'ATTACH_FACE_REAR',
-                'ATTACH_LEYE',
-                'ATTACH_REYE',
-                'ATTACH_FACE_LEYE',
-                'ATTACH_FACE_REYE',
-                'ATTACH_NECK',
-                'ATTACH_LSHOULDER',
-                'ATTACH_RSHOULDER',
-                'ATTACH_LUARM',
-                'ATTACH_RUARM',
-                'ATTACH_LLARM',
-                'ATTACH_RLARM',
-                'ATTACH_LHAND',
-                'ATTACH_RHAND',
-                'ATTACH_LHAND_RING1',
-                'ATTACH_RHAND_RING1',
-                'ATTACH_LWING',
-                'ATTACH_RWING',
-                'ATTACH_CHEST',
-                'ATTACH_LEFT_PEC',
-                'ATTACH_RIGHT_PEC',
-                'ATTACH_BELLY',
-                'ATTACH_BACK',
-                'ATTACH_TAIL_BASE',
-                'ATTACH_TAIL_TIP',
-                'ATTACH_AVATAR_CENTER',
-                'ATTACH_PELVIS',
-                'ATTACH_GROIN',
-                'ATTACH_LHIP',
-                'ATTACH_RHIP',
-                'ATTACH_LULEG',
-                'ATTACH_RULEG',
-                'ATTACH_RLLEG',
-                'ATTACH_LLLEG',
-                'ATTACH_LFOOT',
-                'ATTACH_RFOOT',
-                'ATTACH_HIND_LFOOT',
-                'ATTACH_HIND_RFOOT',
-                'ATTACH_HUD_CENTER_2',
-                'ATTACH_HUD_TOP_RIGHT',
-                'ATTACH_HUD_TOP_CENTER',
-                'ATTACH_HUD_TOP_LEFT',
-                'ATTACH_HUD_CENTER_1',
-                'ATTACH_HUD_BOTTOM_LEFT',
-                'ATTACH_HUD_BOTTOM',
-                'ATTACH_HUD_BOTTOM_RIGHT',
+                'ATTACH_FACE_LEFT_EAR',
+                'ATTACH_FACE_LEFT_EYE',
+                'ATTACH_FACE_RIGHT_EAR',
+                'ATTACH_FACE_RIGHT_EYE',
+                'ATTACH_FACE_TONGUE',
+                'ATTACH_FACE_GROOM',
+                'ATTACH_FACE_ALT_A',
+                'ATTACH_FACE_ALT_B',
+                'ATTACH_FACE_TEETH',
               ])
             );
             break;
@@ -661,23 +627,21 @@ connection.onCompletion(
             break;
           case 'chat':
             smartCompletionItems.push(
-              ...getConstantCompletionItems(['PUBLIC_CHANNEL', 'DEBUG_CHANNEL'])
+              ...getConstantCompletionItems(['DEBUG_CHANNEL', 'PUBLIC_CHANNEL'])
             );
             break;
           case 'click_action':
             smartCompletionItems.push(
               ...getConstantCompletionItems([
-                'CLICK_ACTION_NONE',
-                'CLICK_ACTION_TOUCH',
-                'CLICK_ACTION_SIT',
                 'CLICK_ACTION_BUY',
-                'CLICK_ACTION_PAY',
+                'CLICK_ACTION_NONE',
                 'CLICK_ACTION_OPEN',
-                'CLICK_ACTION_PLAY',
                 'CLICK_ACTION_OPEN_MEDIA',
+                'CLICK_ACTION_PAY',
+                'CLICK_ACTION_PLAY',
+                'CLICK_ACTION_SIT',
+                'CLICK_ACTION_TOUCH',
                 'CLICK_ACTION_ZOOM',
-                'CLICK_ACTION_DISABLED',
-                'CLICK_ACTION_IGNORE',
               ])
             );
             break;
@@ -689,10 +653,10 @@ connection.onCompletion(
           case 'link':
             smartCompletionItems.push(
               ...getConstantCompletionItems([
+                'LINK_ALL_CHILDREN',
+                'LINK_ALL_OTHERS',
                 'LINK_ROOT',
                 'LINK_SET',
-                'LINK_ALL_OTHERS',
-                'LINK_ALL_CHILDREN',
                 'LINK_THIS',
               ])
             );
@@ -701,18 +665,18 @@ connection.onCompletion(
             smartCompletionItems.push(
               ...getConstantCompletionItems([
                 'MASK_BASE',
-                'MASK_OWNER',
-                'MASK_GROUP',
                 'MASK_EVERYONE',
+                'MASK_GROUP',
                 'MASK_NEXT',
+                'MASK_OWNER',
               ])
             );
             break;
           case 'pass':
             smartCompletionItems.push(
               ...getConstantCompletionItems([
-                'PASS_IF_NOT_HANDLED',
                 'PASS_ALWAYS',
+                'PASS_IF_NOT_HANDLED',
                 'PASS_NEVER',
               ])
             );
@@ -731,35 +695,42 @@ connection.onCompletion(
           case 'permission':
             smartCompletionItems.push(
               ...getConstantCompletionItems([
-                'PERMISSION_DEBIT',
-                'PERMISSION_TAKE_CONTROLS',
-                'PERMISSION_TRIGGER_ANIMATION',
                 'PERMISSION_ATTACH',
                 'PERMISSION_CHANGE_LINKS',
-                'PERMISSION_TRACK_CAMERA',
                 'PERMISSION_CONTROL_CAMERA',
-                'PERMISSION_TELEPORT',
-                'PERMISSION_SILENT_ESTATE_MANAGEMENT',
+                'PERMISSION_DEBIT',
                 'PERMISSION_OVERRIDE_ANIMATIONS',
                 'PERMISSION_RETURN_OBJECTS',
+                'PERMISSION_SILENT_ESTATE_MANAGEMENT',
+                'PERMISSION_TAKE_CONTROLS',
+                'PERMISSION_TELEPORT',
+                'PERMISSION_TRACK_CAMERA',
+                'PERMISSION_TRIGGER_ANIMATION',
               ])
             );
             break;
           case 'status':
             smartCompletionItems.push(
               ...getConstantCompletionItems([
+                'STATUS_BLOCK_GRAB',
+                'STATUS_BLOCK_GRAB_OBJECT',
+                'STATUS_BOUNDS_ERROR',
+                'STATUS_CAST_SHADOWS',
+                'STATUS_DIE_AT_EDGE',
+                'STATUS_INTERNAL_ERROR',
+                'STATUS_MALFORMED_PARAMS',
+                'STATUS_NOT_FOUND',
+                'STATUS_NOT_SUPPORTED',
+                'STATUS_OK',
+                'STATUS_PHANTOM',
                 'STATUS_PHYSICS',
+                'STATUS_RETURN_AT_EDGE',
                 'STATUS_ROTATE_X',
                 'STATUS_ROTATE_Y',
                 'STATUS_ROTATE_Z',
-                'STATUS_PHANTOM',
                 'STATUS_SANDBOX',
-                'STATUS_BLOCK_GRAB',
-                'STATUS_DIE_AT_EDGE',
-                'STATUS_RETURN_AT_EDGE',
-                'STATUS_CAST_SHADOWS',
-                'STATUS_BLOCK_GRAB_OBJECT',
-                'STATUS_DIE_AT_NO_ENTRY',
+                'STATUS_TYPE_MISMATCH',
+                'STATUS_WHITELIST_FAILED',
               ])
             );
             break;
@@ -797,17 +768,18 @@ connection.onCompletion(
               ...getConstantCompletionItems([
                 'VEHICLE_ANGULAR_DEFLECTION_EFFICIENCY',
                 'VEHICLE_ANGULAR_DEFLECTION_TIMESCALE',
+                'VEHICLE_ANGULAR_FRICTION_TIMESCALE',
                 'VEHICLE_ANGULAR_MOTOR_DECAY_TIMESCALE',
                 'VEHICLE_ANGULAR_MOTOR_TIMESCALE',
                 'VEHICLE_BANKING_EFFICIENCY',
                 'VEHICLE_BANKING_MIX',
                 'VEHICLE_BANKING_TIMESCALE',
-                'VEHICLE_BUOYANCY',
-                'VEHICLE_HOVER_HEIGHT',
                 'VEHICLE_HOVER_EFFICIENCY',
+                'VEHICLE_HOVER_HEIGHT',
                 'VEHICLE_HOVER_TIMESCALE',
                 'VEHICLE_LINEAR_DEFLECTION_EFFICIENCY',
                 'VEHICLE_LINEAR_DEFLECTION_TIMESCALE',
+                'VEHICLE_LINEAR_FRICTION_TIMESCALE',
                 'VEHICLE_LINEAR_MOTOR_DECAY_TIMESCALE',
                 'VEHICLE_LINEAR_MOTOR_TIMESCALE',
                 'VEHICLE_VERTICAL_ATTRACTION_EFFICIENCY',
@@ -823,12 +795,12 @@ connection.onCompletion(
           case 'vehicle_type':
             smartCompletionItems.push(
               ...getConstantCompletionItems([
-                'VEHICLE_TYPE_NONE',
-                'VEHICLE_TYPE_SLED',
-                'VEHICLE_TYPE_CAR',
-                'VEHICLE_TYPE_BOAT',
                 'VEHICLE_TYPE_AIRPLANE',
                 'VEHICLE_TYPE_BALLOON',
+                'VEHICLE_TYPE_BOAT',
+                'VEHICLE_TYPE_CAR',
+                'VEHICLE_TYPE_NONE',
+                'VEHICLE_TYPE_SLED',
               ])
             );
             break;
@@ -846,21 +818,29 @@ connection.onCompletion(
           default:
         }
 
+        if (!allVariables[params.textDocument.uri]) {
+          allVariables[params.textDocument.uri] = scanDocumentForVariables(
+            document.getText(),
+            params.textDocument.uri
+          );
+        }
+
         smartCompletionItems.push(
-          ...Object.values(allVariables[params.textDocument.uri])
+          ...Object.values(allVariables[params.textDocument.uri] || {})
             .filter(
               (variable) =>
-                allScopes.isInScope(params.position, {
-                  line: variable.line,
-                  character: variable.column,
-                }) &&
+                (variable.isIncluded ||
+                  allScopes.isInScope(params.position, {
+                    line: variable.line,
+                    character: variable.column,
+                  })) &&
                 (variable.type === type ||
                   (['rotation', 'quaternion'].includes(variable.type) &&
                     ['rotation', 'quaternion'].includes(type)))
             )
             .map((variable) => ({
               label: variable.name,
-              kind: CompletionItemKind.Variable,
+              kind: variable.isPreprocessor ? CompletionItemKind.Constant : CompletionItemKind.Variable,
               data: variable.name,
               sortText: `${
                 (subtype &&
@@ -897,6 +877,19 @@ connection.onCompletion(
         );
         return smartCompletionItems;
       } else {
+        if (!allUserFunctions[params.textDocument.uri]) {
+          allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
+            document.getText(),
+            params.textDocument.uri
+          );
+        }
+        if (!allVariables[params.textDocument.uri]) {
+          allVariables[params.textDocument.uri] = scanDocumentForVariables(
+            document.getText(),
+            params.textDocument.uri
+          );
+        }
+
         const functions = Object.keys(allFunctions).map<CompletionItem>(
           (name) => {
             const func = allFunctions[name];
@@ -961,9 +954,10 @@ connection.onCompletion(
         );
 
         const userVariables = Object.values(
-          allVariables[params.textDocument.uri]
+          allVariables[params.textDocument.uri] || {}
         )
           .filter((variable) =>
+            variable.isIncluded ||
             allScopes.isInScope(params.position, {
               line: variable.line,
               character: variable.column,
@@ -971,8 +965,12 @@ connection.onCompletion(
           )
           .map((variable) => ({
             label: variable.name,
-            kind: CompletionItemKind.Variable,
+            kind: variable.isPreprocessor ? CompletionItemKind.Constant : CompletionItemKind.Variable,
             data: variable.name,
+            detail: variable.isPreprocessor
+              ? `#define ${variable.name}${variable.macroParams || ''}${variable.value ? ` ${variable.value}` : ''}`
+              : (variable.type ? `${variable.type} ${variable.name}` : variable.name),
+            documentation: variable.comment,
           }));
 
         return [...functions, ...userFuncs, ...constants, ...userVariables];
@@ -1012,6 +1010,12 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
     return { contents: hoverContent };
   }
 
+  if (!allUserFunctions[params.textDocument.uri])
+    allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
+      document.getText(),
+      params.textDocument.uri
+    );
+
   const lslFunction = allFunctions[word] || (allUserFunctions[params.textDocument.uri] && allUserFunctions[params.textDocument.uri][word]);
   if (lslFunction) {
     const hoverContent = [];
@@ -1042,7 +1046,8 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
       }${word}(${lslFunction.arguments
         .map((a) => {
           const argumentName = Object.keys(a)[0];
-          const argumentType = Object.values(a)[0].type;
+          const argumentDetails = Object.values(a)[0];
+          const argumentType = argumentDetails?.type;
           return `${argumentType} ${argumentName}`;
         })
         .join(', ')})\n\`\`\``
@@ -1053,11 +1058,13 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
     lslFunction.arguments.forEach((a) => {
       const argumentName = Object.keys(a)[0];
       const argumentDetails = Object.values(a)[0];
-      hoverContent.push(
-        `@param \`${argumentDetails.type} ${argumentName}\`${
-          argumentDetails.tooltip ? ` - ${argumentDetails.tooltip}` : ''
-        }`
-      );
+      if (argumentDetails) {
+        hoverContent.push(
+          `@param \`${argumentDetails.type} ${argumentName}\`${
+            argumentDetails.tooltip ? ` - ${argumentDetails.tooltip}` : ''
+          }`
+        );
+      }
     });
     if (allFunctions[word]) {
       hoverContent.push(`Energy: ${lslFunction.energy.toFixed(1)} - Forced delay: ${lslFunction.sleep.toFixed(1)}s`);
@@ -1086,7 +1093,8 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
 
   const variablesInDoc = Object.values(allVariables[params.textDocument.uri] || {});
@@ -1234,14 +1242,16 @@ connection.onDefinition((params): LocationLink[] | null => {
 
   if (!allUserFunctions[params.textDocument.uri])
     allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
 
   const userFunc = allUserFunctions[params.textDocument.uri][word];
   if (userFunc && userFunc.line !== undefined && userFunc.column !== undefined) {
+    const targetUri = userFunc.uri || params.textDocument.uri;
     return [
       LocationLink.create(
-        params.textDocument.uri,
+        targetUri,
         {
           start: { line: userFunc.line, character: 0 },
           end: { line: userFunc.line, character: userFunc.column + word.length },
@@ -1256,7 +1266,8 @@ connection.onDefinition((params): LocationLink[] | null => {
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => {
@@ -1272,14 +1283,15 @@ connection.onDefinition((params): LocationLink[] | null => {
         params.position.character >= variable.column &&
         params.position.character < variable.column + word.length;
 
-      return variable.name === word && referenceFound;
+      return (variable.name === word && referenceFound) || (variable.isIncluded && variable.name === word);
     }
   );
   if (!variable) return null;
 
+  const targetUri = variable.uri || params.textDocument.uri;
   return [
     LocationLink.create(
-      params.textDocument.uri,
+      targetUri,
       {
         start: { line: variable.line, character: variable.columnWithType },
         end: { line: variable.line, character: variable.column + word.length },
@@ -1300,7 +1312,8 @@ connection.onReferences((params): Location[] | null => {
 
   if (!allUserFunctions[params.textDocument.uri])
     allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
 
   const userFunc = allUserFunctions[params.textDocument.uri][word];
@@ -1324,7 +1337,8 @@ connection.onReferences((params): Location[] | null => {
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => variable.name === word
@@ -1347,7 +1361,8 @@ connection.onDocumentHighlight((params): DocumentHighlight[] | null => {
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => {
@@ -1399,7 +1414,8 @@ connection.onPrepareRename((params): { defaultBehavior: boolean } | null => {
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
   let reference: Position | null = null;
   Object.values(allVariables[params.textDocument.uri]).forEach((variable) => {
@@ -1434,7 +1450,8 @@ connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
-      document.getText()
+      document.getText(),
+      params.textDocument.uri
     );
   const variable = Object.values(allVariables[params.textDocument.uri]).find(
     (variable) => {
@@ -1547,9 +1564,10 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
               start: { line: startLine, character: startCol },
               end: { line: startLine, character: startCol },
             },
-            Object.keys(allVariables[params.textDocument.uri])
+            Object.keys(allVariables[params.textDocument.uri] || {})
               .filter((varName) => {
                 const variable = allVariables[params.textDocument.uri][varName];
+                if (variable.isIncluded) return false;
                 return (
                   (variable.line > startLine ||
                     (variable.line === startLine &&
@@ -1597,9 +1615,10 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
               start: { line: startLine, character: startCol },
               end: { line: startLine, character: startCol },
             },
-            Object.keys(allVariables[params.textDocument.uri])
+            Object.keys(allVariables[params.textDocument.uri] || {})
               .filter((varName) => {
                 const variable = allVariables[params.textDocument.uri][varName];
+                if (variable.isIncluded) return false;
                 return (
                   (variable.line > startLine ||
                     (variable.line === startLine &&
@@ -1639,8 +1658,8 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
 
   if (hasMissingEndCurly) return [];
 
-  Object.keys(allVariables[params.textDocument.uri])
-    .filter((varName) => !nonGlobalVariables.includes(varName))
+  Object.keys(allVariables[params.textDocument.uri] || {})
+    .filter((varName) => !nonGlobalVariables.includes(varName) && !allVariables[params.textDocument.uri][varName].isIncluded)
     .forEach((varName) => {
       const variable = allVariables[params.textDocument.uri][varName];
       result.push(
@@ -2020,15 +2039,15 @@ const checkMissingSemicolons = (documentText: string): Diagnostic[] => {
  * Scans a document for all potential identifier references that could be undeclared variables.
  * Returns positions where identifiers are used but not declared in scope.
  */
-const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
+const findUndeclaredVariableUsages = (documentText: string, documentUri?: string): Diagnostic[] => {
   const diagnostics: Diagnostic[] = [];
   const lines = documentText.split('\n');
   const allScopes = getScopes(documentText);
   const commentedOutSections = getCommentedOutSections(documentText);
 
   // Always scan fresh for variables to ensure we have up-to-date data
-  const declaredVariables = scanDocumentForVariables(documentText);
-  const userFuncs = scanDocumentForUserFunctions(documentText);
+  const declaredVariables = scanDocumentForVariables(documentText, documentUri);
+  const userFuncs = scanDocumentForUserFunctions(documentText, documentUri);
 
   // Collect all known valid names (functions, events, constants, keywords)
   const knownNames = new Set<string>();
@@ -2115,10 +2134,11 @@ const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
       // Check if this variable is declared and in scope
       const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
         variable.name === word &&
-        allScopes.isInScope(
-          { line: lineNum, character: colNum },
-          { line: variable.line, character: variable.column }
-        )
+        (variable.isIncluded ||
+          allScopes.isInScope(
+            { line: lineNum, character: colNum },
+            { line: variable.line, character: variable.column }
+          ))
       );
 
       // If not declared or not in scope, flag it as undeclared
@@ -2143,12 +2163,17 @@ const findUndeclaredVariableUsages = (documentText: string): Diagnostic[] => {
  * Returns diagnostics: Hint severity for variables with inline initialization only,
  * Warning severity for variables assigned in separate statements.
  */
-const checkUnusedVariables = (documentText: string): Diagnostic[] => {
+const checkUnusedVariables = (documentText: string, documentUri?: string): Diagnostic[] => {
   const diagnostics: Diagnostic[] = [];
-  const declaredVariables = scanDocumentForVariables(documentText);
+  const declaredVariables = scanDocumentForVariables(documentText, documentUri);
   const lines = documentText.split('\n');
 
   Object.values(declaredVariables).forEach((variable) => {
+    // Skip included variables - they are declared in external/included files
+    if (variable.isIncluded) {
+      return;
+    }
+
     // Skip parameters - they are part of function/event signatures and intentionally may be unused
     if (variable.isParameter) {
       return;
@@ -2235,9 +2260,9 @@ const checkUnusedVariables = (documentText: string): Diagnostic[] => {
 /**
  * Checks for unused user-defined functions - functions that are defined but never called.
  */
-const checkUnusedUserFunctions = (documentText: string): Diagnostic[] => {
+const checkUnusedUserFunctions = (documentText: string, documentUri?: string): Diagnostic[] => {
   const diagnostics: Diagnostic[] = [];
-  const userFuncs = scanDocumentForUserFunctions(documentText);
+  const userFuncs = scanDocumentForUserFunctions(documentText, documentUri);
   const functionCalls = scanDocumentForFunctionCalls(documentText);
 
   // Collect all called function names (excluding the definitions themselves)
@@ -2262,6 +2287,11 @@ const checkUnusedUserFunctions = (documentText: string): Diagnostic[] => {
 
   // Check each user-defined function
   Object.entries(userFuncs).forEach(([funcName, func]) => {
+    // Skip included functions - they are defined in external/included files
+    if (func.isIncluded) {
+      return;
+    }
+
     // Skip deprecated functions - they may intentionally be unused
     if (func.deprecated) {
       return;
@@ -2296,16 +2326,16 @@ connection.languages.diagnostics.on(async (params) => {
   }
 
   // Get errors from Tailslide parser
-  const tailslideDiagnostics = await parseLSL(document.getText());
+  const tailslideDiagnostics = await parseLSL(document.getText(), document.uri);
   
   // Check for undeclared variables
-  const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText());
+  const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText(), document.uri);
   
   // Check for unused variables
-  const unusedDiagnostics = checkUnusedVariables(document.getText());
+  const unusedDiagnostics = checkUnusedVariables(document.getText(), document.uri);
 
   // Check for unused functions
-  const unusedFunctionsDiagnostics = checkUnusedUserFunctions(document.getText());
+  const unusedFunctionsDiagnostics = checkUnusedUserFunctions(document.getText(), document.uri);
 
   // Add missing semicolon diagnostics (custom check since Tailslide may not detect these)
   // const missingSemiDiagnostics = checkMissingSemicolons(document.getText());
@@ -2330,3 +2360,4 @@ documents.listen(connection);
 
 // Listen on the connection
 connection.listen();
+

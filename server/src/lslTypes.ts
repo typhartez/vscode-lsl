@@ -23,6 +23,8 @@ export type LSLFunction = {
 	experience?: boolean;
 	line?: number;
 	column?: number;
+	uri?: string;
+	isIncluded?: boolean;
 }
 
 export type LSLDefinitionList<T> = {
@@ -74,6 +76,8 @@ export type LSLVariable = {
   references: LSLReference[];
   isParameter?: boolean;
   isPreprocessor?: boolean;
+  isIncluded?: boolean;
+  uri?: string;
   value?: string;
   macroParams?: string;
   comment?: string;

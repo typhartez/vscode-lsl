@@ -1,4 +1,6 @@
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import getCommentedOutSections from './comments';
 import { LSLType, LSLVariable, LSLFunctionCall, LSLFunction } from './lslTypes';
 import getQuoteRanges from './quoteRanges';
@@ -7,7 +9,70 @@ import getScopes from './scopes';
 
 export type Variables = { [key: string]: LSLVariable };
 
-export const scanDocumentForUserFunctions = (document: string): { [name: string]: LSLFunction } => {
+export function uriToFilePath(uriOrPath: string): string {
+  if (uriOrPath.startsWith('file://')) {
+    try {
+      return fileURLToPath(uriOrPath);
+    } catch {
+      return uriOrPath.replace(/^file:\/\/\/?/, '');
+    }
+  }
+  return uriOrPath;
+}
+
+export function filePathToUri(filePath: string): string {
+  try {
+    return pathToFileURL(filePath).toString();
+  } catch {
+    return `file:///${filePath.replace(/\\/g, '/')}`;
+  }
+}
+
+export function resolveIncludePath(baseUriOrPath: string, includePath: string): string | null {
+  try {
+    const basePath = uriToFilePath(baseUriOrPath);
+    const baseDir = fs.existsSync(basePath) && fs.statSync(basePath).isDirectory()
+      ? basePath
+      : path.dirname(basePath);
+    const resolvedPath = path.resolve(baseDir, includePath);
+    if (fs.existsSync(resolvedPath)) {
+      return resolvedPath;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export const extractIncludes = (document: string): string[] => {
+  const includes: string[] = [];
+  const lines = document.split('\n');
+  const commentedOutSections = getCommentedOutSections(document);
+
+  lines.forEach((line, lineNum) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('#')) return;
+
+    const hashCol = line.indexOf('#');
+    if (hashCol !== -1 && commentedOutSections.isInSection(lineNum, hashCol)) return;
+
+    const match = line.match(/^\s*#\s*include\s*(?:"([^"]+)"|<([^>]+)>)/);
+    if (match) {
+      const includeFile = match[1] || match[2];
+      if (includeFile && includeFile.trim()) {
+        includes.push(includeFile.trim());
+      }
+    }
+  });
+
+  return includes;
+};
+
+export const scanDocumentForUserFunctions = (
+  document: string,
+  documentUri?: string,
+  visited = new Set<string>()
+): { [name: string]: LSLFunction } => {
   const userFunctions: { [name: string]: LSLFunction } = {};
   const scopes = getScopes(document);
   const lines = document.split('\n');
@@ -106,16 +171,49 @@ export const scanDocumentForUserFunctions = (document: string): { [name: string]
           tooltip: '',
           categories: [],
           line: lineNum,
-          column: Math.max(0, colNum)
+          column: Math.max(0, colNum),
+          uri: documentUri
         };
       }
     }
   });
 
+  if (documentUri) {
+    const normPath = uriToFilePath(documentUri).toLowerCase();
+    visited.add(normPath);
+    const includes = extractIncludes(document);
+    for (const inc of includes) {
+      const resolved = resolveIncludePath(documentUri, inc);
+      if (resolved && !visited.has(resolved.toLowerCase())) {
+        visited.add(resolved.toLowerCase());
+        const incUri = filePathToUri(resolved);
+        try {
+          const content = fs.readFileSync(resolved, 'utf8');
+          const incFuncs = scanDocumentForUserFunctions(content, incUri, visited);
+          for (const [name, func] of Object.entries(incFuncs)) {
+            if (!userFunctions[name]) {
+              userFunctions[name] = {
+                ...func,
+                isIncluded: true,
+                uri: func.uri || incUri,
+              };
+            }
+          }
+        } catch (err) {
+          console.error(`Error reading include ${resolved}:`, err);
+        }
+      }
+    }
+  }
+
   return userFunctions;
 };
 
-export const scanDocumentForVariables = (document: string): Variables => {
+export const scanDocumentForVariables = (
+  document: string,
+  documentUri?: string,
+  visited = new Set<string>()
+): Variables => {
   const allVariables: { [key: string]: LSLVariable } = {};
   const commentedOutSections = getCommentedOutSections(document);
   const lines = document.split('\n');
@@ -154,6 +252,7 @@ export const scanDocumentForVariables = (document: string): Variables => {
           column: currentPreprocessorDefine.column,
           references: [],
           isPreprocessor: true,
+          uri: documentUri,
           value: val,
           macroParams: currentPreprocessorDefine.macroParams,
           comment: currentPreprocessorDefine.comment,
@@ -225,6 +324,7 @@ export const scanDocumentForVariables = (document: string): Variables => {
             column: nameCol !== -1 ? nameCol : defineIdx,
             references: [],
             isPreprocessor: true,
+            uri: documentUri,
             value: valuePart,
             macroParams,
             comment,
@@ -279,6 +379,7 @@ export const scanDocumentForVariables = (document: string): Variables => {
             colNum,
           references: [],
           isParameter,
+          uri: documentUri,
         };
       });
     }
@@ -329,6 +430,35 @@ export const scanDocumentForVariables = (document: string): Variables => {
       }
     });
   });
+
+  if (documentUri) {
+    const normPath = uriToFilePath(documentUri).toLowerCase();
+    visited.add(normPath);
+    const includes = extractIncludes(document);
+    for (const inc of includes) {
+      const resolved = resolveIncludePath(documentUri, inc);
+      if (resolved && !visited.has(resolved.toLowerCase())) {
+        visited.add(resolved.toLowerCase());
+        const incUri = filePathToUri(resolved);
+        try {
+          const content = fs.readFileSync(resolved, 'utf8');
+          const incVars = scanDocumentForVariables(content, incUri, visited);
+          for (const incVar of Object.values(incVars)) {
+            const key = `${incVar.uri || incUri}:${incVar.name}:${incVar.line}`;
+            if (!allVariables[key]) {
+              allVariables[key] = {
+                ...incVar,
+                isIncluded: true,
+                uri: incVar.uri || incUri,
+              };
+            }
+          }
+        } catch (err) {
+          console.error(`Error reading include ${resolved}:`, err);
+        }
+      }
+    }
+  }
 
   return allVariables;
 };

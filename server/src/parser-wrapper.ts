@@ -97,10 +97,12 @@ function stripPreprocessorDirectives(text: string): string {
     return result.join('\n');
 }
 
+import { scanDocumentForVariables, scanDocumentForUserFunctions } from './scanner';
+
 /**
  * Parse LSL code and return diagnostics
  */
-export async function parseLSL(text: string): Promise<Diagnostic[]> {
+export async function parseLSL(text: string, documentUri?: string): Promise<Diagnostic[]> {
     if (!parserModule) {
         await initParser();
     }
@@ -130,7 +132,7 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
         }
     }
 
-    // Collect all #define names from the document to ignore undeclared errors (E10006) for them
+    // Collect all #define names and included symbols to ignore undeclared errors (E10006) for them
     const preprocessorDefines = new Set<string>();
     const lines = text.split('\n');
     lines.forEach((line) => {
@@ -143,6 +145,17 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
             }
         }
     });
+
+    if (documentUri) {
+        const includedVars = scanDocumentForVariables(text, documentUri);
+        Object.values(includedVars).forEach((v) => {
+            preprocessorDefines.add(v.name);
+        });
+        const includedFuncs = scanDocumentForUserFunctions(text, documentUri);
+        Object.keys(includedFuncs).forEach((fn) => {
+            preprocessorDefines.add(fn);
+        });
+    }
 
     // Convert to LSP diagnostics
     // Ignore E20009
