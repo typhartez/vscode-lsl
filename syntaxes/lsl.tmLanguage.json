@@ -803,22 +803,21 @@
       "match": ";"
     },
     "preprocessor-define-value": {
-      "match": "(#define) +([A-Za-z_][\\w]*)(?: +((?<!\")[^ ]*|\".*?\"))?$",
-      "captures": {
+      "begin": "(#define) +([A-Za-z_][\\w]*)(?!\\()",
+      "beginCaptures": {
         "1": {
           "name": "keyword.control.directive.define.lsl"
         },
         "2": {
           "name": "entity.name.variable.lsl"
-        },
-        "3": {
-          "patterns": [
-            {
-              "include": "#expression"
-            }
-          ]
         }
-      }
+      },
+      "end": "(?=//)|$",
+      "patterns": [
+        {
+          "include": "#expression"
+        }
+      ]
     },
     "preprocessor-define-function": {
       "begin": "(?m)(#define) +([a-zA-Z_][\\w]*)(?=\\()",
@@ -844,8 +843,8 @@
       ]
     },
     "preprocessor-include": {
-      "match": "(#include) +(\".*?\")$",
-      "captures": {
+      "begin": "(#include) +(\".*?\")",
+      "beginCaptures": {
         "1": {
           "name": "keyword.control.directive.include.lsl"
         },
@@ -856,15 +855,17 @@
             }
           ]
         }
-      }
+      },
+      "end": "(?=//)|$",
+      "patterns": []
     },
     "preprocessor-global": {
       "patterns": [
         {
-          "include": "#preprocessor-define-value"
+          "include": "#preprocessor-define-function"
         },
         {
-          "include": "#preprocessor-define-function"
+          "include": "#preprocessor-define-value"
         },
         {
           "include": "#preprocessor-include"
@@ -878,7 +879,7 @@
           "name": "keyword.control.preprocessor.if.lsl"
         }
       },
-      "end": "$",
+      "end": "(?=//)|$",
       "patterns": [
         {
           "include": "#expression"
