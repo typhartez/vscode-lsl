@@ -130,10 +130,31 @@ export async function parseLSL(text: string): Promise<Diagnostic[]> {
         }
     }
 
+    // Collect all #define names from the document to ignore undeclared errors (E10006) for them
+    const preprocessorDefines = new Set<string>();
+    const lines = text.split('\n');
+    lines.forEach((line) => {
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('#define')) {
+            const afterDefine = trimmedLine.substring(7).trim();
+            const defineNameMatch = afterDefine.match(/^([a-zA-Z_][a-zA-Z0-9_]*)/);
+            if (defineNameMatch) {
+                preprocessorDefines.add(defineNameMatch[1]);
+            }
+        }
+    });
+
     // Convert to LSP diagnostics
     // Ignore E20009
     for (const error of errorCollector) {
         if (error.code === 'E20009') continue;
+        if (error.code === 'E10006') {
+            // E10006 message format: `identifier' is undeclared.
+            const undeclaredMatch = error.message.match(/^`([^']+)' is undeclared/);
+            if (undeclaredMatch && preprocessorDefines.has(undeclaredMatch[1])) {
+                continue;
+            }
+        }
         if (['E20007'].includes(error.code)) {
             diagnostics.push({
                 severity: DiagnosticSeverity.Warning,
