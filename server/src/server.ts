@@ -1072,6 +1072,46 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
     return { contents: hoverContent };
   }
 
+  if (!allVariables[params.textDocument.uri])
+    allVariables[params.textDocument.uri] = scanDocumentForVariables(
+      document.getText()
+    );
+
+  const variablesInDoc = Object.values(allVariables[params.textDocument.uri] || {});
+  const variable =
+    variablesInDoc.find((v) => {
+      let referenceFound = false;
+      v.references.forEach((position) => {
+        referenceFound ||=
+          position.line === params.position.line &&
+          params.position.character >= position.character &&
+          params.position.character <= position.character + word.length;
+      });
+      referenceFound ||=
+        params.position.line === v.line &&
+        params.position.character >= v.column &&
+        params.position.character <= v.column + word.length;
+
+      return v.name === word && referenceFound;
+    }) || variablesInDoc.find((v) => v.name === word);
+
+  if (variable) {
+    if (variable.isPreprocessor) {
+      const hoverContent = [
+        `\`\`\`lsl\n#define ${variable.name}${variable.macroParams || ''}${
+          variable.value !== undefined && variable.value !== '' ? ` ${variable.value}` : ''
+        }\n\`\`\``,
+      ];
+      if (variable.comment) {
+        hoverContent.push(variable.comment);
+      }
+      return { contents: hoverContent };
+    } else if (variable.type) {
+      const hoverContent = [`\`\`\`lsl\n(${variable.type}) ${variable.name}\n\`\`\``];
+      return { contents: hoverContent };
+    }
+  }
+
   return { contents: '' };
 });
 

@@ -121,37 +121,115 @@ export const scanDocumentForVariables = (document: string): Variables => {
   const lines = document.split('\n');
 
   const allScopes = getScopes(document);
-  let isInPreprocessorDefine = false;
+  let currentPreprocessorDefine: {
+    name: string;
+    macroParams?: string;
+    line: number;
+    column: number;
+    columnWithType: number;
+    valueParts: string[];
+    comment?: string;
+  } | null = null;
 
   lines.forEach((line, lineNum) => {
     const quoteRanges = getQuoteRanges(line);
 
-    let trimmedLine = line.trim();
-    while (trimmedLine.includes('  ')) {
-      trimmedLine = trimmedLine.replaceAll('  ', ' ');
-    }
-    if (isInPreprocessorDefine) {
-      if (!trimmedLine.endsWith('\\')) {
-        isInPreprocessorDefine = false;
+    if (currentPreprocessorDefine) {
+      let content = line.trim();
+      let endsWithBackslash = false;
+      if (content.endsWith('\\')) {
+        endsWithBackslash = true;
+        content = content.slice(0, -1).trim();
+      }
+      if (content) {
+        currentPreprocessorDefine.valueParts.push(content);
+      }
+      if (!endsWithBackslash) {
+        const val = currentPreprocessorDefine.valueParts.join(' ').trim();
+        allVariables[`${currentPreprocessorDefine.name}:${currentPreprocessorDefine.line}`] = {
+          name: currentPreprocessorDefine.name,
+          type: LSLType.Unknown,
+          line: currentPreprocessorDefine.line,
+          columnWithType: currentPreprocessorDefine.columnWithType,
+          column: currentPreprocessorDefine.column,
+          references: [],
+          isPreprocessor: true,
+          value: val,
+          macroParams: currentPreprocessorDefine.macroParams,
+          comment: currentPreprocessorDefine.comment,
+        };
+        currentPreprocessorDefine = null;
       }
       return;
     }
+
+    const trimmedLine = line.trim();
     if (trimmedLine.startsWith('#define')) {
-      const words = trimmedLine.split(' ');
-      let name = words[1];
-      if (words[1].includes('(')) {
-        name = words[1].slice(0, words[1].indexOf('('));
-      }
-      allVariables[`${name}:${lineNum}`] = {
-        name,
-        type: LSLType.Unknown,
-        line: lineNum,
-        columnWithType: 0,
-        column: line.search(new RegExp(`\\b${name}\\b`, 'gm')),
-        references: [],
-      };
-      if (trimmedLine.endsWith('\\')) {
-        isInPreprocessorDefine = true;
+      const defineIdx = line.indexOf('#define');
+      const afterDefine = line.slice(defineIdx + '#define'.length).trimStart();
+      const macroMatch = afterDefine.match(/^([a-zA-Z_][a-zA-Z0-9_]*)(\([^)]*\))?/);
+      if (macroMatch) {
+        const name = macroMatch[1];
+        const macroParams = macroMatch[2];
+        const nameCol = line.indexOf(name, defineIdx + '#define'.length);
+
+        let remainder = afterDefine.slice(macroMatch[0].length).trim();
+        let comment: string | undefined = undefined;
+
+        // Parse comments and value from remainder
+        let inQuote = false;
+        let commentStart = -1;
+        for (let i = 0; i < remainder.length; i++) {
+          if (remainder[i] === '"' && (i === 0 || remainder[i - 1] !== '\\')) {
+            inQuote = !inQuote;
+          } else if (!inQuote) {
+            if (remainder[i] === '/' && remainder[i + 1] === '/') {
+              commentStart = i;
+              comment = remainder.slice(i + 2).trim();
+              break;
+            } else if (remainder[i] === '/' && remainder[i + 1] === '*') {
+              const endComment = remainder.indexOf('*/', i + 2);
+              if (endComment !== -1) {
+                const commentText = remainder.slice(i + 2, endComment).trim();
+                comment = commentText;
+                remainder = remainder.slice(0, i) + remainder.slice(endComment + 2);
+                i--;
+              }
+            }
+          }
+        }
+
+        let valuePart = commentStart !== -1 ? remainder.slice(0, commentStart).trim() : remainder.trim();
+        let endsWithBackslash = false;
+        if (valuePart.endsWith('\\')) {
+          endsWithBackslash = true;
+          valuePart = valuePart.slice(0, -1).trim();
+        }
+
+        if (endsWithBackslash) {
+          currentPreprocessorDefine = {
+            name,
+            macroParams,
+            line: lineNum,
+            column: nameCol !== -1 ? nameCol : defineIdx,
+            columnWithType: defineIdx,
+            valueParts: valuePart ? [valuePart] : [],
+            comment,
+          };
+        } else {
+          allVariables[`${name}:${lineNum}`] = {
+            name,
+            type: LSLType.Unknown,
+            line: lineNum,
+            columnWithType: defineIdx,
+            column: nameCol !== -1 ? nameCol : defineIdx,
+            references: [],
+            isPreprocessor: true,
+            value: valuePart,
+            macroParams,
+            comment,
+          };
+        }
       }
       return;
     }

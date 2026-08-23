@@ -73,6 +73,10 @@ export type LSLVariable = {
   columnWithType: number;
   references: LSLReference[];
   isParameter?: boolean;
+  isPreprocessor?: boolean;
+  value?: string;
+  macroParams?: string;
+  comment?: string;
 };
 
 export type LSLFunctionCall = Position & {
