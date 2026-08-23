@@ -992,7 +992,19 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
 
   const lslConstant = allConstants[word];
   if (lslConstant) {
-    const hoverContent = [`\`\`\`lsl\n${word}\n\`\`\``];
+    let constValue = lslConstant.value;
+    if (
+      (lslConstant.type === 'string' || lslConstant.type === 'key') &&
+      constValue !== undefined
+    ) {
+      const strVal = String(constValue);
+      constValue = strVal.startsWith('"') && strVal.endsWith('"') ? strVal : JSON.stringify(strVal);
+    }
+    const hoverContent = [
+      `\`\`\`lsl\n${lslConstant.type ? `(${lslConstant.type}) ` : ''}${word}${
+        constValue !== undefined ? ` = ${constValue}` : ''
+      }\n\`\`\``,
+    ];
     if (lslConstant.tooltip) {
       hoverContent.push(...lslConstant.tooltip.split('\n'));
     }
