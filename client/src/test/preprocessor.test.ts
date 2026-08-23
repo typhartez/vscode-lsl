@@ -6,6 +6,7 @@ import { activate } from './helper';
 suite('Preprocessor and #include tests', () => {
 	const preprocessorUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'preprocessor.lsl'));
 	const debugUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'debug.lsl'));
+	const lazyListUri = vscode.Uri.file(path.resolve(__dirname, '../../testFixture', 'lazy-list.lsl'));
 
 	test('Included functions and defines are recognized without undeclared variable errors', async () => {
 		await activate(preprocessorUri);
@@ -66,5 +67,35 @@ suite('Preprocessor and #include tests', () => {
 			defUri.fsPath.toLowerCase().endsWith('debug.lsl'),
 			`Expected definition to point to debug.lsl, got: ${defUri.fsPath}`
 		);
+	});
+
+	test('Firestorm lazy list indexing syntax does not produce E10020 errors', async () => {
+		await activate(lazyListUri);
+
+		// Wait for diagnostics to settle
+		await new Promise(resolve => setTimeout(resolve, 2000));
+
+		const diagnostics = vscode.languages.getDiagnostics(lazyListUri);
+		// The lazy-list.lsl fixture uses only lazy list indexing syntax with
+		// declared list variables — there should be no E10020 syntax errors.
+		const e10020Errors = diagnostics.filter(d => d.code === 'E10020');
+		assert.equal(e10020Errors.length, 0,
+			`Expected no E10020 errors for lazy list syntax, got: ${e10020Errors.map(d => d.message).join('; ')}`);
+	});
+
+	test('Lazy list lines in preprocessor.lsl do not produce E10020 errors', async () => {
+		await activate(preprocessorUri);
+
+		// Wait for diagnostics to settle
+		await new Promise(resolve => setTimeout(resolve, 2000));
+
+		const diagnostics = vscode.languages.getDiagnostics(preprocessorUri);
+		// Lines (1-based) using lazy list indexing: 22, 23, 82
+		const lazyListLines = [21, 22, 81]; // 0-based
+		const lazyListE10020 = diagnostics.filter(d =>
+			lazyListLines.includes(d.range.start.line) && d.code === 'E10020'
+		);
+		assert.equal(lazyListE10020.length, 0,
+			`Expected no E10020 errors on lazy list lines, got: ${lazyListE10020.map(d => d.message).join('; ')}`);
 	});
 });

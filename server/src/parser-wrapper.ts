@@ -98,6 +98,34 @@ function stripPreprocessorDirectives(text: string): string {
 }
 
 import { scanDocumentForVariables, scanDocumentForUserFunctions } from './scanner';
+import { LSLType } from './lslTypes';
+
+/**
+ * Replaces Firestorm lazy list indexing syntax (e.g. `myList[2]`) with
+ * space-padded text so that the Tailslide parser — which does not understand
+ * this Firestorm preprocessor extension — won't report syntax errors for the
+ * `[` token or produce cascading parse errors on the same line.
+ *
+ * The replacement preserves the original character count (by padding with
+ * spaces), so line/column offsets in any remaining diagnostics still match
+ * the original source positions.
+ */
+function transformLazyListSyntax(text: string, listVariableNames: Set<string>): string {
+    if (listVariableNames.size === 0) return text;
+    let result = text;
+    for (const name of listVariableNames) {
+        // Match: listVar [ index ]  (whitespace around brackets is optional)
+        const re = new RegExp(`\\b${escapeRegExp(name)}\\s*\\[([^\\]]*)\\]`, 'g');
+        result = result.replace(re, (match) => {
+            return name + ' '.repeat(match.length - name.length);
+        });
+    }
+    return result;
+}
+
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Parse LSL code and return diagnostics
@@ -116,24 +144,11 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
 
     const diagnostics: Diagnostic[] = [];
 
-    try {
-        // Strip preprocessor directive lines before parsing — Tailslide does not understand
-        // Firestorm/LSL preprocessor directives (#define, #include, #if, etc.).
-        // Replace them with empty lines to preserve line numbers for accurate diagnostics.
-        const strippedText = stripPreprocessorDirectives(text);
-        // Write content to Emscripten virtual filesystem
-        parserModule.FS.writeFile('/diagnostic.lsl', strippedText);
-        parserModule.callMain(['diagnostic.lsl']);
-    } catch (e: unknown) {
-        // ExitStatus exceptions are expected for normal parser exit
-        const error = e as { name?: string };
-        if (error.name !== 'ExitStatus' && error.name !== 'exit') {
-            console.error('Parser error:', e);
-        }
-    }
-
     // Collect all #define names and included symbols to ignore undeclared errors (E10006) for them
     const preprocessorDefines = new Set<string>();
+    // Collect names of `list` variables to support Firestorm's lazy list indexing syntax
+    // (e.g. myList[2] = "c"), which Tailslide does not understand and reports as E10020.
+    const listVariableNames = new Set<string>();
     const lines = text.split('\n');
     lines.forEach((line) => {
         const trimmedLine = line.trim();
@@ -150,11 +165,34 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
         const includedVars = scanDocumentForVariables(text, documentUri);
         Object.values(includedVars).forEach((v) => {
             preprocessorDefines.add(v.name);
+            if (v.type === LSLType.List) {
+                listVariableNames.add(v.name);
+            }
         });
         const includedFuncs = scanDocumentForUserFunctions(text, documentUri);
         Object.keys(includedFuncs).forEach((fn) => {
             preprocessorDefines.add(fn);
         });
+    }
+
+    try {
+        // Strip preprocessor directive lines before parsing — Tailslide does not understand
+        // Firestorm/LSL preprocessor directives (#define, #include, #if, etc.).
+        // Replace them with empty lines to preserve line numbers for accurate diagnostics.
+        let parseText = stripPreprocessorDirectives(text);
+        // Transform Firestorm's lazy list indexing syntax (listVar[index]) into
+        // space-padded text so Tailslide doesn't report E10020 syntax errors for
+        // the '[' token, nor produce cascading errors on the same line.
+        parseText = transformLazyListSyntax(parseText, listVariableNames);
+        // Write content to Emscripten virtual filesystem
+        parserModule.FS.writeFile('/diagnostic.lsl', parseText);
+        parserModule.callMain(['diagnostic.lsl']);
+    } catch (e: unknown) {
+        // ExitStatus exceptions are expected for normal parser exit
+        const error = e as { name?: string };
+        if (error.name !== 'ExitStatus' && error.name !== 'exit') {
+            console.error('Parser error:', e);
+        }
     }
 
     // Convert to LSP diagnostics
@@ -165,6 +203,32 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
             // E10006 message format: `identifier' is undeclared.
             const undeclaredMatch = error.message.match(/^`([^']+)' is undeclared/);
             if (undeclaredMatch && preprocessorDefines.has(undeclaredMatch[1])) {
+                continue;
+            }
+        }
+        if (error.code === 'E10020' && error.message.includes("unexpected '['")) {
+            // Safety net: if Tailslide still reports an unexpected '[' and the
+            // identifier immediately before it is a declared `list` variable
+            // (Firestorm lazy list indexing syntax), suppress the diagnostic.
+            const line = lines[error.startLine];
+            if (line !== undefined) {
+                const before = line.slice(0, error.startCharacter);
+                const idMatch = before.match(/([a-zA-Z_][a-zA-Z0-9_]*)\s*$/);
+                if (idMatch && listVariableNames.has(idMatch[1])) {
+                    continue;
+                }
+            }
+        }
+        if (error.code === 'E10002' && /^Invalid operator: list =/.test(error.message)) {
+            // Suppresses type-mismatch errors introduced by the lazy-list
+            // transformation: listVar[index] = value  →  listVar    = value
+            // which Tailslide correctly flags as "list = <type>". The original
+            // line still contains the lazy-list pattern (listVar[) so we can
+            // identify these as transformation side-effects.
+            const line = lines[error.startLine];
+            if (line !== undefined && Array.from(listVariableNames).some(name =>
+                new RegExp(`\\b${escapeRegExp(name)}\\s*\\[`).test(line)
+            )) {
                 continue;
             }
         }

@@ -6,3 +6,10 @@ debug(string text)
 #else
 #define debug(dummy)
 #endif
+
+default {
+    state_entry()
+    {
+        // Intentionally empty.
+    }
+}

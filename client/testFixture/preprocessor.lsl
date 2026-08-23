@@ -47,7 +47,7 @@ default
             switch (random)
             {
                 case 0:
-                case 1
+                case 1:
                 {
                     debug("1 is the loneliest number");
                     break;
@@ -55,18 +55,18 @@ default
 
 
 
-                case 2
+                case 2:
                 {
                     debug("2 and you have a friend");
                     break;
                 }
-                case 3
+                case 3:
                 {
                     debug("3's company");
                     break;
                 }
                 // this is a comment
-                case 4
+                case 4:
                 {
                     debug("Too many cooks in the kitchen");
                     break;
