@@ -86,3 +86,11 @@ export type LSLVariable = {
 export type LSLFunctionCall = Position & {
 	functionName: string;
 }
+
+export type LSLJumpLabel = {
+	name: string;
+	line: number;
+	character: number;
+	uri?: string;
+	isDefinition: boolean;
+}

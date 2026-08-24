@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import getCommentedOutSections from './comments';
-import { LSLType, LSLVariable, LSLFunctionCall, LSLFunction } from './lslTypes';
+import { LSLType, LSLVariable, LSLFunctionCall, LSLFunction, LSLJumpLabel } from './lslTypes';
 import getQuoteRanges from './quoteRanges';
 import { convertToType } from './types';
 import getScopes from './scopes';
@@ -494,4 +494,64 @@ export const scanDocumentForFunctionCalls = (document: string): LSLFunctionCall[
   });
   
   return functionCalls;
+};
+
+export type JumpLabelMap = {
+  definitions: { [name: string]: LSLJumpLabel }
+  usages: { [name: string]: LSLJumpLabel[] }
+};
+
+/**
+ * Scans the document for LSL jump labels: `@label;` (definitions) and
+ * `jump label;` (usages). Used for goto-definition and to suppress
+ * false-positive undeclared-variable diagnostics.
+ */
+export const scanDocumentForJumpLabels = (
+  document: string,
+  documentUri?: string
+): JumpLabelMap => {
+  const definitions: { [name: string]: LSLJumpLabel } = {};
+  const usages: { [name: string]: LSLJumpLabel[] } = {};
+  const commentedOutSections = getCommentedOutSections(document);
+  const lines = document.split('\n');
+
+  lines.forEach((line, lineNum) => {
+    // Find jump target definitions: @label (followed by ; on this line)
+    const labelDefMatches = line.matchAll(/@([a-zA-Z_][a-zA-Z0-9_]*)/g);
+    for (const match of labelDefMatches) {
+      const colNum = match.index ?? -1;
+      if (colNum === -1) continue;
+      if (commentedOutSections.isInSection(lineNum, colNum)) continue;
+      const name = match[1];
+      if (!definitions[name]) {
+        definitions[name] = {
+          name,
+          line: lineNum,
+          character: colNum + 1, // position of label name (after @)
+          uri: documentUri,
+          isDefinition: true,
+        };
+      }
+    }
+
+    // Find jump usages: jump label
+    const jumpMatches = line.matchAll(/\bjump\s+([a-zA-Z_][a-zA-Z0-9_]*)/g);
+    for (const match of jumpMatches) {
+      const colNum = match.index ?? -1;
+      if (colNum === -1) continue;
+      if (commentedOutSections.isInSection(lineNum, colNum)) continue;
+      const name = match[1];
+      if (!usages[name]) usages[name] = [];
+      const labelOffset = match[0].indexOf(match[1]);
+      usages[name].push({
+        name,
+        line: lineNum,
+        character: colNum + labelOffset,
+        uri: documentUri,
+        isDefinition: false,
+      });
+    }
+  });
+
+  return { definitions, usages };
 };

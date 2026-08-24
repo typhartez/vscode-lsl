@@ -47,7 +47,9 @@ import {
   scanDocumentForVariables,
   scanDocumentForFunctionCalls,
   scanDocumentForUserFunctions,
+  scanDocumentForJumpLabels,
   Variables,
+  JumpLabelMap,
 } from './scanner';
 import getQuoteRanges from './quoteRanges';
 import getCommentedOutSections from './comments';
@@ -505,6 +507,7 @@ documents.onDidClose((e) => {
 
 const allVariables: { [uri: string]: Variables } = {};
 const allUserFunctions: { [uri: string]: { [name: string]: LSLFunction } } = {};
+const allJumpLabels: { [uri: string]: JumpLabelMap } = {};
 
 // The content of a text document has changed. This event is emitted
 // when the text document first opened or when its content has changed.
@@ -516,6 +519,10 @@ documents.onDidChangeContent((change) => {
       change.document.uri
     );
     allUserFunctions[change.document.uri] = scanDocumentForUserFunctions(
+      change.document.getText(),
+      change.document.uri
+    );
+    allJumpLabels[change.document.uri] = scanDocumentForJumpLabels(
       change.document.getText(),
       change.document.uri
     );
@@ -877,6 +884,30 @@ connection.onCompletion(
         );
         return smartCompletionItems;
       } else {
+        // Check if the user is typing a jump label name after "jump "
+        const textBeforeCursor = line.substring(0, params.position.character);
+        const jumpContextMatch = textBeforeCursor.match(/\bjump\s+([a-zA-Z_]*)$/);
+
+        if (!allJumpLabels[params.textDocument.uri]) {
+          allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+            document.getText(),
+            params.textDocument.uri
+          );
+        }
+        const jumpLabelItems = jumpContextMatch
+          ? Object.values(allJumpLabels[params.textDocument.uri].definitions)
+              .filter((label) =>
+                label.name.startsWith(jumpContextMatch[1] || '')
+              )
+              .map<CompletionItem>((label) => ({
+                label: label.name,
+                kind: CompletionItemKind.Keyword,
+                data: label.name,
+                detail: `@label ${label.name}`,
+                documentation: 'Jump target',
+              }))
+          : [];
+
         if (!allUserFunctions[params.textDocument.uri]) {
           allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
             document.getText(),
@@ -973,7 +1004,7 @@ connection.onCompletion(
             documentation: variable.comment,
           }));
 
-        return [...functions, ...userFuncs, ...constants, ...userVariables];
+        return [...jumpLabelItems, ...functions, ...userFuncs, ...constants, ...userVariables];
       }
     } catch (e) {
       console.error('Error in onCompletion:', e);
@@ -987,6 +1018,43 @@ connection.onHover((params: TextDocumentPositionParams): Hover => {
   if (document === undefined) return { contents: '' };
   const word = getWord(document.getText(), params.position);
   if (!word) return { contents: '' };
+
+  // Check for jump labels — @label definitions and jump label usages
+  if (!allJumpLabels[params.textDocument.uri])
+    allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+      document.getText(),
+      params.textDocument.uri
+    );
+  const jumpLabels = allJumpLabels[params.textDocument.uri];
+
+  const isJumpLabel =
+    Object.values(jumpLabels.definitions).some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    ) ||
+    Object.values(jumpLabels.usages).flat().some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    );
+
+  if (isJumpLabel) {
+    const usageCount = (jumpLabels.usages[word] || []).length;
+    return {
+      contents: [
+        '```lsl\n@label ' + word + '\n```',
+        `**Jump target** \`${word}\``,
+        usageCount > 0
+          ? `${usageCount} jump usage${usageCount !== 1 ? 's' : ''}`
+          : 'No jump usages',
+      ],
+    };
+  }
 
   const lslConstant = allConstants[word];
   if (lslConstant) {
@@ -1240,6 +1308,66 @@ connection.onDefinition((params): LocationLink[] | null => {
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
 
+  // Check for jump labels — clicking on `jump label` navigates to `@label`
+  if (!allJumpLabels[params.textDocument.uri])
+    allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+      document.getText(),
+      params.textDocument.uri
+    );
+  const jumpLabels = allJumpLabels[params.textDocument.uri];
+
+  const jumpLabelUsage = Object.values(jumpLabels.usages).flat().find(
+    (label) =>
+      label.name === word &&
+      label.line === params.position.line &&
+      params.position.character >= label.character &&
+      params.position.character < label.character + word.length
+  );
+  if (jumpLabelUsage) {
+    const definition = jumpLabels.definitions[jumpLabelUsage.name];
+    if (definition) {
+      const targetUri = definition.uri || params.textDocument.uri;
+      return [
+        LocationLink.create(
+          targetUri,
+          {
+            start: { line: definition.line, character: definition.character - 1 },
+            end: { line: definition.line, character: definition.character + word.length },
+          },
+          {
+            start: { line: definition.line, character: definition.character },
+            end: { line: definition.line, character: definition.character + word.length },
+          }
+        ),
+      ];
+    }
+  }
+
+  // Clicking on `@label` itself also goes to its definition (self)
+  const jumpLabelDef = Object.values(jumpLabels.definitions).find(
+    (label) =>
+      label.name === word &&
+      label.line === params.position.line &&
+      params.position.character >= label.character &&
+      params.position.character < label.character + word.length
+  );
+  if (jumpLabelDef) {
+    const targetUri = jumpLabelDef.uri || params.textDocument.uri;
+    return [
+      LocationLink.create(
+        targetUri,
+        {
+          start: { line: jumpLabelDef.line, character: jumpLabelDef.character - 1 },
+          end: { line: jumpLabelDef.line, character: jumpLabelDef.character + word.length },
+        },
+        {
+          start: { line: jumpLabelDef.line, character: jumpLabelDef.character },
+          end: { line: jumpLabelDef.line, character: jumpLabelDef.character + word.length },
+        }
+      ),
+    ];
+  }
+
   if (!allUserFunctions[params.textDocument.uri])
     allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
       document.getText(),
@@ -1310,6 +1438,52 @@ connection.onReferences((params): Location[] | null => {
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
 
+  // Check for jump labels — find all @label definitions and jump label usages
+  if (!allJumpLabels[params.textDocument.uri])
+    allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+      document.getText(),
+      params.textDocument.uri
+    );
+  const jumpLabels = allJumpLabels[params.textDocument.uri];
+
+  const isOnJumpLabel =
+    Object.values(jumpLabels.definitions).some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    ) ||
+    Object.values(jumpLabels.usages).flat().some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    );
+
+  if (isOnJumpLabel) {
+    const locations: Location[] = [];
+    const definition = jumpLabels.definitions[word];
+    if (definition) {
+      locations.push(
+        Location.create(definition.uri || params.textDocument.uri, {
+          start: { line: definition.line, character: definition.character - 1 },
+          end: { line: definition.line, character: definition.character + word.length },
+        })
+      );
+    }
+    (jumpLabels.usages[word] || []).forEach((usage) => {
+      locations.push(
+        Location.create(usage.uri || params.textDocument.uri, {
+          start: { line: usage.line, character: usage.character },
+          end: { line: usage.line, character: usage.character + word.length },
+        })
+      );
+    });
+    return locations;
+  }
+
   if (!allUserFunctions[params.textDocument.uri])
     allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
       document.getText(),
@@ -1358,6 +1532,56 @@ connection.onDocumentHighlight((params): DocumentHighlight[] | null => {
   if (document === undefined) return null;
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
+
+  // Check for jump labels
+  if (!allJumpLabels[params.textDocument.uri])
+    allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+      document.getText(),
+      params.textDocument.uri
+    );
+  const jumpLabels = allJumpLabels[params.textDocument.uri];
+
+  const isJumpLabelDef = Object.values(jumpLabels.definitions).some(
+    (label) =>
+      label.name === word &&
+      label.line === params.position.line &&
+      params.position.character >= label.character &&
+      params.position.character < label.character + word.length
+  );
+  const isJumpLabelUsage = Object.values(jumpLabels.usages).flat().some(
+    (label) =>
+      label.name === word &&
+      label.line === params.position.line &&
+      params.position.character >= label.character &&
+      params.position.character < label.character + word.length
+  );
+  if (isJumpLabelDef || isJumpLabelUsage) {
+    const highlights: DocumentHighlight[] = [];
+    const definition = jumpLabels.definitions[word];
+    if (definition) {
+      highlights.push(
+        DocumentHighlight.create(
+          {
+            start: { line: definition.line, character: definition.character - 1 },
+            end: { line: definition.line, character: definition.character + word.length },
+          },
+          DocumentHighlightKind.Write
+        )
+      );
+    }
+    (jumpLabels.usages[word] || []).forEach((usage) => {
+      highlights.push(
+        DocumentHighlight.create(
+          {
+            start: { line: usage.line, character: usage.character },
+            end: { line: usage.line, character: usage.character + word.length },
+          },
+          DocumentHighlightKind.Read
+        )
+      );
+    });
+    return highlights;
+  }
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
@@ -1412,6 +1636,31 @@ connection.onPrepareRename((params): { defaultBehavior: boolean } | null => {
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
 
+  // Check for jump labels
+  if (!allJumpLabels[params.textDocument.uri])
+    allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+      document.getText(),
+      params.textDocument.uri
+    );
+  const jumpLabels = allJumpLabels[params.textDocument.uri];
+
+  const isJumpLabel =
+    Object.values(jumpLabels.definitions).some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    ) ||
+    Object.values(jumpLabels.usages).flat().some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    );
+  if (isJumpLabel) return { defaultBehavior: true };
+
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
       document.getText(),
@@ -1447,6 +1696,67 @@ connection.onRenameRequest((params: RenameParams): WorkspaceEdit | null => {
   if (document === undefined) return null;
   const word = getWord(document.getText(), params.position);
   if (!word) return null;
+
+  // Check for jump labels
+  if (!allJumpLabels[params.textDocument.uri])
+    allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+      document.getText(),
+      params.textDocument.uri
+    );
+  const jumpLabels = allJumpLabels[params.textDocument.uri];
+
+  const isJumpLabel =
+    Object.values(jumpLabels.definitions).some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    ) ||
+    Object.values(jumpLabels.usages).flat().some(
+      (label) =>
+        label.name === word &&
+        label.line === params.position.line &&
+        params.position.character >= label.character &&
+        params.position.character < label.character + word.length
+    );
+  if (isJumpLabel) {
+    const edits: TextEdit[] = [];
+    const definition = jumpLabels.definitions[word];
+    if (definition) {
+      edits.push(
+        TextEdit.replace(
+          {
+            start: { line: definition.line, character: definition.character },
+            end: {
+              line: definition.line,
+              character: definition.character + word.length,
+            },
+          },
+          params.newName
+        )
+      );
+    }
+    (jumpLabels.usages[word] || []).forEach((usage) => {
+      edits.push(
+        TextEdit.replace(
+          {
+            start: { line: usage.line, character: usage.character },
+            end: {
+              line: usage.line,
+              character: usage.character + word.length,
+            },
+          },
+          params.newName
+        )
+      );
+    });
+    return {
+      changes: {
+        [params.textDocument.uri]: edits,
+      },
+    };
+  }
 
   if (!allVariables[params.textDocument.uri])
     allVariables[params.textDocument.uri] = scanDocumentForVariables(
@@ -2130,6 +2440,12 @@ const findUndeclaredVariableUsages = (documentText: string, documentUri?: string
 
       // Skip vector/rotation properties (.x, .y, .z, .s)
       if (['x', 'y', 'z', 's'].includes(word) && justBeforeMatch.trimEnd().endsWith('.')) continue;
+
+      // Skip jump target labels — `@label;` defines a jump target, and
+      // `jump label;` references one. Both are valid LSL and should not be
+      // reported as undeclared variables.
+      if (justBeforeMatch.trimEnd().endsWith('@')) continue;
+      if (/\bjump\s*$/i.test(justBeforeMatch.trimEnd())) continue;
 
       // Check if this variable is declared and in scope
       const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
