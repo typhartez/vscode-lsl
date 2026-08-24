@@ -1,7 +1,3 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- * ------------------------------------------------------------------------------------------ */
 import {
   createConnection,
   TextDocuments,
@@ -564,6 +560,30 @@ connection.onCompletion(
       const allScopes = getScopes(document.getText());
 
       if (' (,'.includes(lastChar)) {
+        // Check if the user is typing a jump label name after "jump "
+        const textBeforeCursor = line.substring(0, params.position.character);
+        const jumpContextMatch = textBeforeCursor.match(/\bjump\s+([a-zA-Z_]*)$/i);
+
+        if (!allJumpLabels[params.textDocument.uri]) {
+          allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
+            document.getText(),
+            params.textDocument.uri
+          );
+        }
+        if (jumpContextMatch) {
+          return Object.values(allJumpLabels[params.textDocument.uri].definitions)
+            .filter((label) =>
+              label.name.startsWith(jumpContextMatch[1] || '')
+            )
+            .map<CompletionItem>((label) => ({
+              label: label.name,
+              kind: CompletionItemKind.Keyword,
+              data: label.name,
+              detail: `@label ${label.name}`,
+              documentation: 'Jump target',
+            }));
+        }
+
         const functionNameInfo = findFunctionName(params);
         if (!functionNameInfo) return [];
         const { funcName, parenFound, numberOfCommas } = functionNameInfo;
@@ -884,30 +904,6 @@ connection.onCompletion(
         );
         return smartCompletionItems;
       } else {
-        // Check if the user is typing a jump label name after "jump "
-        const textBeforeCursor = line.substring(0, params.position.character);
-        const jumpContextMatch = textBeforeCursor.match(/\bjump\s+([a-zA-Z_]*)$/);
-
-        if (!allJumpLabels[params.textDocument.uri]) {
-          allJumpLabels[params.textDocument.uri] = scanDocumentForJumpLabels(
-            document.getText(),
-            params.textDocument.uri
-          );
-        }
-        const jumpLabelItems = jumpContextMatch
-          ? Object.values(allJumpLabels[params.textDocument.uri].definitions)
-              .filter((label) =>
-                label.name.startsWith(jumpContextMatch[1] || '')
-              )
-              .map<CompletionItem>((label) => ({
-                label: label.name,
-                kind: CompletionItemKind.Keyword,
-                data: label.name,
-                detail: `@label ${label.name}`,
-                documentation: 'Jump target',
-              }))
-          : [];
-
         if (!allUserFunctions[params.textDocument.uri]) {
           allUserFunctions[params.textDocument.uri] = scanDocumentForUserFunctions(
             document.getText(),
@@ -1004,7 +1000,7 @@ connection.onCompletion(
             documentation: variable.comment,
           }));
 
-        return [...jumpLabelItems, ...functions, ...userFuncs, ...constants, ...userVariables];
+        return [...functions, ...userFuncs, ...constants, ...userVariables];
       }
     } catch (e) {
       console.error('Error in onCompletion:', e);
