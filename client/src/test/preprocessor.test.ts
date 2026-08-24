@@ -98,4 +98,23 @@ suite('Preprocessor and #include tests', () => {
 		assert.equal(lazyListE10020.length, 0,
 			`Expected no E10020 errors on lazy list lines, got: ${lazyListE10020.map(d => d.message).join('; ')}`);
 	});
+
+	test('Switch/case lines in preprocessor.lsl do not produce E10020 errors', async () => {
+		await activate(preprocessorUri);
+
+		// Wait for diagnostics to settle
+		await new Promise(resolve => setTimeout(resolve, 2000));
+
+		const diagnostics = vscode.languages.getDiagnostics(preprocessorUri);
+		// The switch/case block in preprocessor.lsl spans lines 47-78 (1-based)
+		// Tailslide doesn't fully understand LSL switch syntax, so E10020
+		// errors inside the block should be suppressed.
+		const switchStart = 46; // 0-based
+		const switchEnd = 78;   // 0-based
+		const switchE10020 = diagnostics.filter(d =>
+			d.range.start.line >= switchStart && d.range.start.line <= switchEnd && d.code === 'E10020'
+		);
+		assert.equal(switchE10020.length, 0,
+			`Expected no E10020 errors inside switch/case block, got: ${switchE10020.map(d => d.message).join('; ')}`);
+	});
 });

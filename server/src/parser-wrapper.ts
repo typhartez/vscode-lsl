@@ -128,6 +128,62 @@ function escapeRegExp(s: string): string {
 }
 
 /**
+ * Returns a set of 0-based line numbers that fall inside switch/case blocks.
+ *
+ * Tailslide's LSL grammar does not fully support the standard LSL switch/case
+ * syntax (e.g. the `{` after `switch (expr)`, the `case N:` integer labels,
+ * `default:`, `break;`, and the closing `}`). These produce false-positive
+ * E10020 (and E10006 for `break`) errors that should be suppressed.
+ *
+ * The function scans for `switch` statements and uses brace-counting to
+ * identify the full switch block, including nested case blocks.
+ */
+function findSwitchCaseLines(text: string): Set<number> {
+    const switchLines = new Set<number>();
+    const lines = text.split('\n');
+
+    let i = 0;
+    while (i < lines.length) {
+        if (!/\bswitch\s*\(/.test(lines[i])) {
+            i++;
+            continue;
+        }
+
+        // Find the opening { of the switch block (first { on or after this line)
+        let braceDepth = 0;
+        let foundOpenBrace = false;
+        let startLine = -1;
+
+        for (let j = i; j < lines.length; j++) {
+            const line = lines[j];
+            for (let k = 0; k < line.length; k++) {
+                const ch = line[k];
+                if (ch === '{') {
+                    if (!foundOpenBrace) {
+                        foundOpenBrace = true;
+                        startLine = j;
+                    }
+                    braceDepth++;
+                } else if (ch === '}') {
+                    braceDepth--;
+                    if (foundOpenBrace && braceDepth === 0) {
+                        for (let m = startLine; m <= j; m++) {
+                            switchLines.add(m);
+                        }
+                        i = j;
+                        break;
+                    }
+                }
+            }
+            if (foundOpenBrace && braceDepth === 0) break;
+        }
+        i++;
+    }
+
+    return switchLines;
+}
+
+/**
  * Parse LSL code and return diagnostics
  */
 export async function parseLSL(text: string, documentUri?: string): Promise<Diagnostic[]> {
@@ -175,6 +231,10 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
         });
     }
 
+    // Identify switch/case blocks where Tailslide's limited grammar produces
+    // false-positive E10020 errors (it doesn't fully understand LSL switch syntax).
+    const switchCaseLines = findSwitchCaseLines(text);
+
     try {
         // Strip preprocessor directive lines before parsing — Tailslide does not understand
         // Firestorm/LSL preprocessor directives (#define, #include, #if, etc.).
@@ -202,8 +262,17 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
         if (error.code === 'E10006') {
             // E10006 message format: `identifier' is undeclared.
             const undeclaredMatch = error.message.match(/^`([^']+)' is undeclared/);
-            if (undeclaredMatch && preprocessorDefines.has(undeclaredMatch[1])) {
-                continue;
+            if (undeclaredMatch) {
+                const identifierName = undeclaredMatch[1];
+                if (preprocessorDefines.has(identifierName)) {
+                    continue;
+                }
+                // `break` is a valid LSL keyword inside switch/case blocks, but
+                // Tailslide doesn't recognize it as a keyword and reports it as
+                // undeclared. Suppress these false positives inside switch blocks.
+                if (identifierName === 'break' && switchCaseLines.has(error.startLine)) {
+                    continue;
+                }
             }
         }
         if (error.code === 'E10020' && error.message.includes("unexpected '['")) {
@@ -218,6 +287,13 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
                     continue;
                 }
             }
+        }
+        if (error.code === 'E10020' && switchCaseLines.has(error.startLine)) {
+            // Tailslide's grammar doesn't fully understand standard LSL switch/case
+            // syntax, producing false-positive E10020 errors for the block's `{`,
+            // `case N:` labels, `default:`, and closing `}`. Suppress all E10020
+            // errors inside switch blocks.
+            continue;
         }
         if (error.code === 'E10002' && /^Invalid operator: list =/.test(error.message)) {
             // Suppresses type-mismatch errors introduced by the lazy-list
