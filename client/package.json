@@ -1,7 +1,7 @@
 {
-	"name": "lsp-sample-client",
-	"description": "VSCode part of a language server",
-	"author": "Microsoft Corporation",
+	"name": "vscode-lsl",
+	"description": "LSP for LSL",
+	"author": "jyaoma",
 	"license": "MIT",
 	"version": "0.0.1",
 	"publisher": "vscode",
