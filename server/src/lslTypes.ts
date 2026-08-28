@@ -57,10 +57,22 @@ export enum LSLType {
 	Unknown = ''
 }
 
+export type LSLTypeDefinition = {
+	tooltip: string;
+	private?: boolean;
+}
+
+export type LSLControlDefinition = {
+	tooltip: string;
+	deprecated?: boolean;
+}
+
 export type LSLDefinitionYaml = {
 	constants: LSLDefinitionList<LSLConstant>;
 	events: LSLDefinitionList<LSLEvent>;
 	functions: LSLDefinitionList<LSLFunction>;
+	types: LSLDefinitionList<LSLTypeDefinition>;
+	controls: LSLDefinitionList<LSLControlDefinition>;
 }
 
 export type LSLReference = Position & {

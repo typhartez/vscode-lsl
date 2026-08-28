@@ -184,9 +184,16 @@ function findSwitchCaseLines(text: string): Set<number> {
 }
 
 /**
- * Parse LSL code and return diagnostics
+ * Parse LSL code and return diagnostics.
+ *
+ * @param text - The LSL source code to parse.
+ * @param documentUri - Optional URI of the document (used for variable scanning).
+ * @param builtinIdentifiers - Optional set of built-in LSL identifiers (functions,
+ *   constants, events, types, keywords) from lsl_definitions.yaml. Used to suppress
+ *   E10006 "undeclared" errors for built-in items that Tailslide may not recognize
+ *   due to being outdated.
  */
-export async function parseLSL(text: string, documentUri?: string): Promise<Diagnostic[]> {
+export async function parseLSL(text: string, documentUri?: string, builtinIdentifiers?: Set<string>): Promise<Diagnostic[]> {
     if (!parserModule) {
         await initParser();
     }
@@ -265,6 +272,13 @@ export async function parseLSL(text: string, documentUri?: string): Promise<Diag
             if (undeclaredMatch) {
                 const identifierName = undeclaredMatch[1];
                 if (preprocessorDefines.has(identifierName)) {
+                    continue;
+                }
+                // Built-in LSL items (functions, constants, events, types, keywords)
+                // from lsl_definitions.yaml may be reported as undeclared by Tailslide
+                // if the bundled Tailslide version is outdated. Suppress these errors
+                // since the identifier is a known built-in.
+                if (builtinIdentifiers && builtinIdentifiers.has(identifierName)) {
                     continue;
                 }
                 // `break` is a valid LSL keyword inside switch/case blocks, but

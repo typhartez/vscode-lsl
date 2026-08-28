@@ -59,6 +59,20 @@ const allFunctions = lslDefinitionYaml.functions;
 const allConstants = lslDefinitionYaml.constants;
 const allEvents = lslDefinitionYaml.events;
 
+// Build a set of all built-in LSL identifiers (functions, constants, events,
+// types, and control keywords) from the definitions YAML. Tailslide may be
+// outdated and report these as undeclared (E10006), so we suppress that error
+// for any identifier that is a known built-in.
+const builtinIdentifiers = new Set<string>([
+  ...Object.keys(allFunctions),
+  ...Object.keys(allConstants),
+  ...Object.keys(allEvents),
+  ...Object.keys(lslDefinitionYaml.types),
+  ...Object.keys(lslDefinitionYaml.controls),
+  // Additional LSL language keywords/literals not documented in the definitions YAML
+  'switch', 'case', 'break', 'continue', 'TRUE', 'FALSE',
+]);
+
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
 const connection = createConnection(ProposedFeatures.all);
@@ -2638,7 +2652,7 @@ connection.languages.diagnostics.on(async (params) => {
   }
 
   // Get errors from Tailslide parser
-  const tailslideDiagnostics = await parseLSL(document.getText(), document.uri);
+  const tailslideDiagnostics = await parseLSL(document.getText(), document.uri, builtinIdentifiers);
   
   // Check for undeclared variables
   const undeclaredDiagnostics = findUndeclaredVariableUsages(document.getText(), document.uri);
