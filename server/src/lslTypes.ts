@@ -89,6 +89,7 @@ export type LSLVariable = {
   isParameter?: boolean;
   isPreprocessor?: boolean;
   isIncluded?: boolean;
+  isGlobal?: boolean;
   uri?: string;
   value?: string;
   macroParams?: string;

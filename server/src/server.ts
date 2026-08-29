@@ -2460,7 +2460,10 @@ const findUndeclaredVariableUsages = (documentText: string, documentUri?: string
       // Check if this variable is declared and in scope
       const isDeclaredAndInScope = Object.values(declaredVariables).some(variable =>
         variable.name === word &&
-        (variable.isIncluded ||
+        // Global variables are visible throughout the entire script regardless
+        // of where they are declared (forward reference resolution).
+        (variable.isGlobal ||
+          variable.isIncluded ||
           allScopes.isInScope(
             { line: lineNum, character: colNum },
             { line: variable.line, character: variable.column }

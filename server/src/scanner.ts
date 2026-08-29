@@ -369,6 +369,11 @@ export const scanDocumentForVariables = (
         const funcNameMatch = trimmedLine.match(/^[a-z_][a-zA-Z0-9_]*\s*\([^)]*\)/);
         const isParameter = currentScope?.name !== undefined && !!funcNameMatch;
 
+        // A variable is global if it is declared outside of any named scope
+        // (e.g. not inside a function or state block). In LSL, global variables
+        // are visible throughout the entire script regardless of declaration order.
+        const isGlobal = currentScope === null;
+
         allVariables[`${name}:${lineNum}`] = {
           name,
           type: convertToType(type),
@@ -379,6 +384,7 @@ export const scanDocumentForVariables = (
             colNum,
           references: [],
           isParameter,
+          isGlobal,
           uri: documentUri,
         };
       });
